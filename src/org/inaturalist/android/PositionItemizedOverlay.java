@@ -1,5 +1,5 @@
 package org.inaturalist.android;
-
+/*
 import android.content.Context;
 import android.location.Location;
 import android.util.Log;
@@ -7,6 +7,8 @@ import android.util.Log;
 import com.google.android.maps.GeoPoint;
 import com.google.android.maps.ItemizedOverlay;
 import com.google.android.maps.OverlayItem;
+
+// this class appears to be obsolete
 
 public class PositionItemizedOverlay extends ItemizedOverlay {
     public final static String TAG = "PositionItemizedOverlay";
@@ -39,4 +41,4 @@ public class PositionItemizedOverlay extends ItemizedOverlay {
         populate();
     }
 
-}
+}*/
