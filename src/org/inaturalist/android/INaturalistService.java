@@ -77,6 +77,8 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     private boolean mGetLocationForProjects = false; // if true -> we assume it's for near by guides
     
     
+    public static final String IS_SHARED_ON_APP = "is_shared_on_app";
+
     public static final String OBSERVATION_ID = "observation_id";
     public static final String OBSERVATION_RESULT = "observation_result";
     public static final String PROJECTS_RESULT = "projects_result";
@@ -105,6 +107,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     public static String ACTION_ADD_IDENTIFICATION = "add_identification";
     public static String ACTION_GET_TAXON = "get_taxon";
     public static String ACTION_FIRST_SYNC = "first_sync";
+    public static String ACTION_PULL_OBSERVATIONS = "pull_observations";
     public static String ACTION_GET_OBSERVATION = "get_observation";
     public static String ACTION_GET_CHECK_LIST = "get_check_list";
     public static String ACTION_JOIN_PROJECT = "join_project";
@@ -155,6 +158,8 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     private Hashtable<Integer, Hashtable<Integer, ProjectFieldValue>> mProjectFieldValues;
 
     private Header[] mResponseHeaders = null;
+
+	private JSONArray mResponseErrors;
     
 	public enum LoginType {
 	    PASSWORD,
@@ -177,6 +182,9 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         mLoginType = LoginType.valueOf(mPreferences.getString("login_type", LoginType.PASSWORD.toString()));
         mApp = (INaturalistApp) getApplicationContext();
         String action = intent.getAction();
+        
+        if (action == null) return;
+        
         mPassive = action.equals(ACTION_PASSIVE_SYNC);
         
         
@@ -229,19 +237,24 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                 int guideId = intent.getIntExtra(ACTION_GUIDE_ID, 0);
                 SerializableJSONArray taxa = getTaxaForGuide(guideId);
 
+                mApp.setServiceResult(ACTION_TAXA_FOR_GUIDES_RESULT, taxa);
                 Intent reply = new Intent(ACTION_TAXA_FOR_GUIDES_RESULT);
-                reply.putExtra(TAXA_GUIDE_RESULT, taxa);
+                reply.putExtra(IS_SHARED_ON_APP, true);
                 sendBroadcast(reply);
 
              } else if (action.equals(ACTION_GET_ALL_GUIDES)) {
                 SerializableJSONArray guides = getAllGuides();
                 
+                mApp.setServiceResult(ACTION_ALL_GUIDES_RESULT, guides);
                 Intent reply = new Intent(ACTION_ALL_GUIDES_RESULT);
-                reply.putExtra(GUIDES_RESULT, guides);
+                reply.putExtra(IS_SHARED_ON_APP, true);
                 sendBroadcast(reply);
 
              } else if (action.equals(ACTION_GET_MY_GUIDES)) {
-                SerializableJSONArray guides = getMyGuides();
+            	 SerializableJSONArray guides = null;
+            	 if (mCredentials != null) {
+            		 guides = getMyGuides();
+            	 }
                 
                 Intent reply = new Intent(ACTION_MY_GUIDES_RESULT);
                 reply.putExtra(GUIDES_RESULT, guides);
@@ -297,7 +310,10 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                  sendBroadcast(reply);
                 
              } else if (action.equals(ACTION_GET_JOINED_PROJECTS)) {
-                 SerializableJSONArray projects = getJoinedProjectsOffline();
+                 SerializableJSONArray projects = null;
+            	 if (mCredentials != null) {
+            		 projects = getJoinedProjectsOffline();
+            	 }
 
                  Intent reply = new Intent(ACTION_JOINED_PROJECTS_RESULT);
                  reply.putExtra(PROJECTS_RESULT, projects);
@@ -341,7 +357,16 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                 int id = intent.getExtras().getInt(PROJECT_ID);
                 leaveProject(id);
                 
-                
+            } else if (action.equals(ACTION_PULL_OBSERVATIONS)) {
+            	// Download observations without uploading any new ones
+                mIsSyncing = true;
+                mApp.setIsSyncing(mIsSyncing);
+                getUserObservations(0);
+
+                 // Update last sync time
+                long lastSync = System.currentTimeMillis();
+                mPreferences.edit().putLong("last_sync_time", lastSync).commit();
+                 
             } else {
                 mIsSyncing = true;
                 mApp.setIsSyncing(mIsSyncing);
@@ -431,9 +456,9 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             ProjectObservation projectObservation = new ProjectObservation(c);
             BetterJSONObject result = addObservationToProject(projectObservation.observation_id, projectObservation.project_id);
             
-            SerializableJSONArray errors = result.getJSONArray("errors");
+            if (mResponseErrors != null) {
+                SerializableJSONArray errors = new SerializableJSONArray(mResponseErrors);
             
-            if (errors != null) {
                 // Couldn't add the observation to the project (probably didn't pass validation)
                 String error;
                 try {
@@ -659,11 +684,14 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             observation = new Observation(c);
             handleObservationResponse(
                     observation,
-                    put(HOST + "/observations/" + observation.id + ".json?extra=observation_photos", paramsForObservation(observation))
+                    put(HOST + "/observations/" + observation.id + ".json?extra=observation_photos", paramsForObservation(observation, false))
             );
             c.moveToNext();
         }
         c.close();
+
+        String inatNetwork = mApp.getInaturalistNetworkMember();
+        String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
 
         // query observations where _synced_at IS NULL
         c = getContentResolver().query(Observation.CONTENT_URI, 
@@ -671,6 +699,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                 "id IS NULL", null, Observation.SYNC_ORDER);
         int createdCount = c.getCount();
         // for each observation POST to /observations/
+
         c.moveToFirst();
         while (c.isAfterLast() == false) {
             mApp.notify(SYNC_OBSERVATIONS_NOTIFICATION, 
@@ -680,7 +709,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             observation = new Observation(c);
             handleObservationResponse(
                     observation,
-                    post(HOST + "/observations.json?extra=observation_photos", paramsForObservation(observation))
+                    post("https://" + inatHost + "/observations.json?extra=observation_photos", paramsForObservation(observation, true))
             );
             c.moveToNext();
         }
@@ -739,7 +768,9 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                     null, 
                     MediaStore.Images.Media.DEFAULT_SORT_ORDER);
             
-            if (pc.getCount() == 0) {
+            if (pc == null) {
+            	continue;
+            } else if (pc.getCount() == 0) {
                 // photo has been deleted, destroy the ObservationPhoto
                 getContentResolver().delete(op.getUri(), null, null);
                 continue;
@@ -750,8 +781,12 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             String imgFilePath = pc.getString(pc.getColumnIndexOrThrow(MediaStore.Images.Media.DATA));
             params.add(new BasicNameValuePair("file", imgFilePath));
             
+            String inatNetwork = mApp.getInaturalistNetworkMember();
+            String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
+            params.add(new BasicNameValuePair("site_id", mApp.getStringResourceByName("inat_site_id_" + inatNetwork)));
+            
             // TODO LATER resize the image for upload, maybe a 1024px jpg
-            JSONArray response = post(MEDIA_HOST + "/observation_photos.json", params);
+            JSONArray response = post("https://" + inatHost + "/observation_photos.json", params);
             try {
                 if (response == null || response.length() != 1) {
                     break;
@@ -789,19 +824,47 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     
     
     private SerializableJSONArray getAllGuides() throws AuthenticationException {
-        String url = HOST + "/guides.json";
+    	String inatNetwork = mApp.getInaturalistNetworkMember();
+    	String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
+
+        String url = "https://" + inatHost + "/guides.json?";
         
-        JSONArray json = get(url);
+        url += "per_page=200&page=";
         
-        return new SerializableJSONArray(json);
+        JSONArray results = new JSONArray();
+
+        // Results are paginated - make sure to retrieve them all
+        
+        int page = 1;
+        JSONArray currentResults = get(url + page);
+        
+        while ((currentResults != null) && (currentResults.length() > 0)) {
+        	// Append current results
+        	for (int i = 0; i < currentResults.length(); i++) {
+        		try {
+					results.put(currentResults.get(i));
+				} catch (JSONException e) {
+					e.printStackTrace();
+				}
+        	}
+
+        	page++;
+            currentResults = get(url + page);
+        }
+        
+        return new SerializableJSONArray(results);
     }
     
     private SerializableJSONArray getMyGuides() throws AuthenticationException {
         if (ensureCredentials() == false) {
             return null;
         }
-        String url = HOST + "/guides.json?by=you";
+
         
+        String inatNetwork = mApp.getInaturalistNetworkMember();
+        String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
+       
+        String url = "https://" + inatHost + "/guides.json?by=you&per_page=200";
         JSONArray json = get(url, true);
         
         return new SerializableJSONArray(json);
@@ -809,7 +872,14 @@ public class INaturalistService extends IntentService implements ConnectionCallb
 
     private SerializableJSONArray getNearByGuides(boolean useLocationServices) throws AuthenticationException {
         if (useLocationServices) {
-            Location location = mLocationClient.getLastLocation();
+        	Location location;
+        	try {
+        		location = mLocationClient.getLastLocation();
+        	} catch (IllegalStateException ex) {
+        		ex.printStackTrace();
+        		return new SerializableJSONArray();
+        	}
+
             return getNearByGuides(location);
         } else {
             // Use GPS alone to determine location
@@ -831,8 +901,10 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         double lat  = location.getLatitude();
         double lon  = location.getLongitude();
 
-        String url = HOST + String.format("/guides.json?latitude=%s&longitude=%s", lat, lon);
+        String inatNetwork = mApp.getInaturalistNetworkMember();
+        String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
 
+        String url = "https://" + inatHost + String.format("/guides.json?latitude=%s&longitude=%s&per_page=200", lat, lon);
         Log.e(TAG, url);
 
         JSONArray json = get(url);
@@ -851,8 +923,11 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         double lat  = location.getLatitude();
         double lon  = location.getLongitude();
 
-        String url = HOST + String.format("/projects.json?latitude=%s&longitude=%s", lat, lon);
+        String inatNetwork = mApp.getInaturalistNetworkMember();
+        String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
 
+        String url = "https://" + inatHost + String.format("/projects.json?latitude=%s&longitude=%s", lat, lon);
+        
         Log.e(TAG, url);
 
         JSONArray json = get(url);
@@ -883,8 +958,14 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     private SerializableJSONArray getNearByProjects(boolean useLocationServices) throws AuthenticationException {
            
         if (useLocationServices) {
-            Location location = mLocationClient.getLastLocation();
-            
+        	Location location;
+        	try {
+        		location = mLocationClient.getLastLocation();
+         	} catch (IllegalStateException ex) {
+        		ex.printStackTrace();
+        		return new SerializableJSONArray();
+        	}
+           
             return getNearByProjects(location);
         } else {
             // Use GPS alone to determine location
@@ -898,10 +979,9 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     }
 
     private SerializableJSONArray getFeaturedProjects() throws AuthenticationException {
-        if (ensureCredentials() == false) {
-            return null;
-        }
-        String url = HOST + "/projects.json?featured=true";
+        String inatNetwork = mApp.getInaturalistNetworkMember();
+        String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
+        String url = "https://" + inatHost + "/projects.json?featured=true";
         
         JSONArray json = get(url);
         
@@ -957,7 +1037,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     }
     
     public void joinProject(int projectId) throws AuthenticationException {
-        post(String.format("%s/projects/%d/join", HOST, projectId), null);
+        post(String.format("%s/projects/%d/join.json", HOST, projectId), null);
         
         try {
             JSONArray result = get(String.format("%s/projects/%d.json", HOST, projectId));
@@ -977,7 +1057,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     } 
     
     public void leaveProject(int projectId) throws AuthenticationException {
-        delete(String.format("%s/projects/%d/leave", HOST, projectId), null);
+        delete(String.format("%s/projects/%d/leave.json", HOST, projectId), null);
         
         // Remove locally saved project (because we left it)
         getContentResolver().delete(Project.CONTENT_URI, "(id IS NOT NULL) and (id = "+projectId+")", null);
@@ -1027,7 +1107,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
  
     
     private SerializableJSONArray getCheckList(int id) throws AuthenticationException {
-        String url = String.format("%s/lists/%d.json?per_page=100", HOST, id);
+        String url = String.format("%s/lists/%d.json?per_page=50", HOST, id);
         
         JSONArray json = get(url);
         
@@ -1074,7 +1154,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         if (ensureCredentials() == false) {
             return null;
         }
-        String url = HOST + "/projects/user/" + mLogin + ".json";
+        String url = HOST + "/projects/user/" + Uri.encode(mLogin) + ".json";
         
         JSONArray json = get(url, true);
         JSONArray finalJson = new JSONArray();
@@ -1106,7 +1186,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         if (ensureCredentials() == false) {
             return;
         }
-        String url = HOST + "/observations/" + mLogin + ".json";
+        String url = HOST + "/observations/" + Uri.encode(mLogin) + ".json";
         
         long lastSync = mPreferences.getLong("last_sync_time", 0);
         Timestamp lastSyncTS = new Timestamp(lastSync);
@@ -1161,22 +1241,24 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                 // Need to retrieve remote observation fields to see how to sync the fields
                 JSONArray jsonResult = get(HOST + "/observations/" + localField.observation_id + ".json");
 
-                Hashtable<Integer, ProjectFieldValue> fields = new Hashtable<Integer, ProjectFieldValue>();
-                
-                try {
-                    JSONArray jsonFields = jsonResult.getJSONObject(0).getJSONArray("observation_field_values");
+                if (jsonResult != null) {
+                	Hashtable<Integer, ProjectFieldValue> fields = new Hashtable<Integer, ProjectFieldValue>();
 
-                    for (int j = 0; j < jsonFields.length(); j++) {
-                        JSONObject jsonField = jsonFields.getJSONObject(j);
-                        JSONObject observationField = jsonField.getJSONObject("observation_field");
-                        int id = observationField.optInt("id", jsonField.getInt("observation_field_id"));
-                        fields.put(id, new ProjectFieldValue(new BetterJSONObject(jsonField)));
-                    }
-                } catch (JSONException e) {
-                    e.printStackTrace();
+                	try {
+                		JSONArray jsonFields = jsonResult.getJSONObject(0).getJSONArray("observation_field_values");
+
+                		for (int j = 0; j < jsonFields.length(); j++) {
+                			JSONObject jsonField = jsonFields.getJSONObject(j);
+                			JSONObject observationField = jsonField.getJSONObject("observation_field");
+                			int id = observationField.optInt("id", jsonField.getInt("observation_field_id"));
+                			fields.put(id, new ProjectFieldValue(new BetterJSONObject(jsonField)));
+                		}
+                	} catch (JSONException e) {
+                		e.printStackTrace();
+                	}
+
+                	mProjectFieldValues.put(localField.observation_id, fields);
                 }
-
-                mProjectFieldValues.put(localField.observation_id, fields);
             }
             
             Hashtable<Integer, ProjectFieldValue> fields = mProjectFieldValues.get(Integer.valueOf(localField.observation_id));
@@ -1392,7 +1474,25 @@ public class INaturalistService extends IntentService implements ConnectionCallb
                 
                 mResponseHeaders = response.getAllHeaders();
                 
+                try {
+                	if (json != null) {
+                        JSONObject result = json.getJSONObject(0);
+                        if (result.has("errors")) {
+                            // Error response
+                            Log.e(TAG, "Got an error response: " + result.get("errors").toString());
+                            mResponseErrors = result.getJSONArray("errors");
+                            return null;
+                        }
+                	}
+				} catch (JSONException e) {
+					e.printStackTrace();
+				}
+                
+                mResponseErrors = null;
+                
+                
                 return json;
+
             case HttpStatus.SC_UNAUTHORIZED:
                 throw new AuthenticationException();
             case HttpStatus.SC_GONE:
@@ -1432,7 +1532,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         mApp.sweepingNotify(AUTH_NOTIFICATION, getString(R.string.please_sign_in), getString(R.string.please_sign_in_description), null, intent);
     }
     
-    public static boolean verifyCredentials(String credentials) {
+    public static String verifyCredentials(String credentials) {
         DefaultHttpClient client = new DefaultHttpClient();
         client.getParams().setParameter(CoreProtocolPNames.USER_AGENT, USER_AGENT);
         String url = HOST + "/observations/new.json";
@@ -1445,20 +1545,41 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             HttpEntity entity = response.getEntity();
             String content = EntityUtils.toString(entity);
             if (response.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
-                return true;
+            	// Next, find the iNat username (since we currently only have email address)
+            	request = new HttpGet(HOST + "/users/edit.json");
+                request.setHeader("Authorization", "Basic "+credentials);
+
+            	response = client.execute(request);
+            	entity = response.getEntity();
+            	content = EntityUtils.toString(entity);
+
+            	if (response.getStatusLine().getStatusCode() != HttpStatus.SC_OK) {
+            		return null;
+            	}
+
+            	JSONObject json = new JSONObject(content);
+            	if (!json.has("login")) {
+            		return null;
+            	}
+
+            	String username = json.getString("login");
+
+                return username;
             } else {
                 Log.e(TAG, "Authentication failed: " + content);
-                return false;
+                return null;
             }
         }
         catch (IOException e) {
             request.abort();
             Log.w(TAG, "Error for URL " + url, e);
-        }
-        return false;
+        } catch (JSONException e) {
+			e.printStackTrace();
+		}
+        return null;
     }
 
-    public static boolean verifyCredentials(String username, String password) {
+    public static String verifyCredentials(String username, String password) {
         String credentials = Base64.encodeToString(
                 (username + ":" + password).getBytes(), Base64.URL_SAFE|Base64.NO_WRAP
                 );
@@ -1669,10 +1790,15 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             if (joinedPhotoIds.length() > 0) {
                 where += " AND id NOT in (" + joinedPhotoIds + ")";
             }
-            getContentResolver().delete(
+            int deleteCount = getContentResolver().delete(
                     ObservationPhoto.CONTENT_URI, 
                     where, 
                     null);
+            
+            if (deleteCount > 0) {
+            	//Crashlytics.log(1, TAG, String.format("Warning: Deleted %d photos locally after sever did not contain those IDs - observation id: %s, photo ids: %s",
+            	//		deleteCount, observation.id, joinedPhotoIds));
+            }
 
             if (isModified) {
                 // Only update the DB if needed
@@ -1740,9 +1866,15 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         }
     }
     
-    private ArrayList<NameValuePair> paramsForObservation(Observation observation) {
+    private ArrayList<NameValuePair> paramsForObservation(Observation observation, boolean isPOST) {
         ArrayList<NameValuePair> params = observation.getParams();
         params.add(new BasicNameValuePair("ignore_photos", "true"));
+
+        if (isPOST) {
+        	String inatNetwork = mApp.getInaturalistNetworkMember();
+        	params.add(new BasicNameValuePair("site_id", mApp.getStringResourceByName("inat_site_id_" + inatNetwork)));
+        }
+
         return params;
     }
     

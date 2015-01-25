@@ -37,6 +37,7 @@ import android.widget.TextView;
 import com.actionbarsherlock.app.ActionBar;
 import com.actionbarsherlock.app.SherlockActivity;
 import com.actionbarsherlock.view.MenuItem;
+import com.flurry.android.FlurryAgent;
 import com.koushikdutta.urlimageviewhelper.UrlImageViewCallback;
 import com.koushikdutta.urlimageviewhelper.UrlImageViewHelper;
 
@@ -56,6 +57,22 @@ public class GuideDetails extends SherlockActivity {
 	private EditText mSearchText;
 
 	public TaxaListAdapter mAdapter;
+	
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+	}
+
+	@Override
+	protected void onStop()
+	{
+		super.onStop();		
+		FlurryAgent.onEndSession(this);
+	}	
+
 	
 	private class TaxaListAdapter extends ArrayAdapter<JSONObject> {
 
@@ -159,6 +176,9 @@ public class GuideDetails extends SherlockActivity {
 					});
             	} catch (JSONException e) {
             		e.printStackTrace();
+            	} catch (Exception e) {
+            		// Could happen if user scrolls really fast and there a LOT of thumbnails being downloaded at once (too many threads at once)
+            		e.printStackTrace();
             	}
             }
             
@@ -174,7 +194,17 @@ public class GuideDetails extends SherlockActivity {
         public void onReceive(Context context, Intent intent) {
             unregisterReceiver(mTaxaGuideReceiver);
             
-            SerializableJSONArray taxaSerializable = (SerializableJSONArray) intent.getSerializableExtra(INaturalistService.TAXA_GUIDE_RESULT);
+            SerializableJSONArray taxaSerializable;
+            
+            Boolean isSharedOnApp = intent.getBooleanExtra(INaturalistService.IS_SHARED_ON_APP, false);
+            
+            if (!isSharedOnApp) {
+            	taxaSerializable = (SerializableJSONArray) intent.getSerializableExtra(INaturalistService.TAXA_GUIDE_RESULT);
+            } else {
+            	// Get results from app context
+            	taxaSerializable = (SerializableJSONArray) mApp.getServiceResult(INaturalistService.ACTION_TAXA_FOR_GUIDES_RESULT);
+            	mApp.setServiceResult(INaturalistService.TAXA_GUIDE_RESULT, null); // Clear data afterwards
+            }
             JSONArray taxa = (taxaSerializable == null ? new SerializableJSONArray() : taxaSerializable).getJSONArray();
             mTaxa = new ArrayList<JSONObject>();
             

@@ -123,6 +123,7 @@
                 android:text="@string/signed_out" />
         </LinearLayout>
 
+        
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -141,28 +142,28 @@
         		android:id="@+id/radioLang"
         		android:layout_width="wrap_content"
         		android:layout_height="wrap_content" >
-                
-	            <RadioButton
-	                android:id="@+id/rbDeviceLang"
-	                android:layout_width="wrap_content"
-	                android:layout_height="wrap_content"
-	                android:onClick="onRadioButtonClicked"
-	                android:text="@string/use_device_language_settings" />
+            </RadioGroup>
+        </LinearLayout>        
+        
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="vertical" >
 
-	            <RadioButton
-	                android:id="@+id/rbDeviceEu"
-	                android:layout_width="wrap_content"
-	                android:layout_height="wrap_content"
-	                android:onClick="onRadioButtonClicked"
-	                android:text="@string/locale_eu" />
+            <TextView
+                android:id="@+id/tvLanguageSettings"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="5dp"
+                android:text="@string/inat_network_settings"
+                android:textAppearance="?android:attr/textAppearanceMedium" />
 
-	            <RadioButton
-	                android:id="@+id/rbDeviceGl"
-	                android:layout_width="wrap_content"
-	                android:layout_height="wrap_content"
-	                android:onClick="onRadioButtonClicked"
-	                android:text="@string/locale_gl" />
-	                
+            <RadioGroup
+        		android:id="@+id/radioNetworks"
+        		android:layout_width="wrap_content"
+        		android:layout_height="wrap_content" >
+                <!-- Content will be added here dynamically -->
             </RadioGroup>
         </LinearLayout>
 
@@ -176,8 +177,38 @@
                 style="@android:style/TextAppearance.Medium"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_centerInParent="true"
+                android:layout_centerHorizontal="true"
                 android:text="@string/tutorial_link" />
+
+            <TextView
+                android:id="@+id/contact_support"
+                style="@android:style/TextAppearance.Medium"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_below="@id/tutorial_link"
+                android:layout_marginTop="10dp"
+                android:layout_centerHorizontal="true"
+                android:text="@string/contact_support" />
+
+            <TextView
+                android:id="@+id/credits"
+                style="@android:style/TextAppearance.Small"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_below="@id/contact_support"
+                android:layout_marginTop="30dp"
+                android:text="@string/credits" />
+
+            <TextView
+                android:id="@+id/version"
+                style="@android:style/TextAppearance.Small"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_below="@id/credits"
+                android:layout_marginTop="20dp"
+                android:layout_centerHorizontal="true"
+                android:text="Version 1.2.3" />
+
         </RelativeLayout>
 
     </LinearLayout>

@@ -10,6 +10,8 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.v4.app.FragmentActivity;
@@ -21,6 +23,7 @@ import com.actionbarsherlock.app.SherlockFragmentActivity;
 import com.actionbarsherlock.view.Menu;
 import com.actionbarsherlock.view.MenuInflater;
 import com.actionbarsherlock.view.MenuItem;
+import com.flurry.android.FlurryAgent;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.GoogleMap.OnCameraChangeListener;
@@ -47,6 +50,20 @@ public class INaturalistMapActivity extends SherlockFragmentActivity implements 
     private HashMap<String, Observation> mMarkerObservations;
     private INaturalistApp mApp;
     
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+	}
+
+	@Override
+	protected void onStop()
+	{
+		super.onStop();		
+		FlurryAgent.onEndSession(this);
+	}	
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -77,6 +94,8 @@ public class INaturalistMapActivity extends SherlockFragmentActivity implements 
  
     @Override
     public boolean onPrepareOptionsMenu(Menu menu) {
+        if (mMap == null) return super.onPrepareOptionsMenu(menu);
+
         MenuItem layersItem = menu.findItem(R.id.layers);
         if (mMap.getMapType() == GoogleMap.MAP_TYPE_HYBRID) {
             layersItem.setTitle(R.string.street);
@@ -117,6 +136,11 @@ public class INaturalistMapActivity extends SherlockFragmentActivity implements 
             finish();
             return true;
         case R.id.nearby:
+        	if (!isNetworkAvailable()) {
+        		Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+        		return true;
+        	}
+
             reloadNearbyObservations();
             return true;
         default:
@@ -182,6 +206,8 @@ public class INaturalistMapActivity extends SherlockFragmentActivity implements 
     }
     
     private void addObservation(Observation o) {
+    	if (o == null) return;
+    	
         if (o.private_latitude == null && o.latitude == null) {
             return;
         }
@@ -353,4 +379,11 @@ public class INaturalistMapActivity extends SherlockFragmentActivity implements 
         // TODO make a decent infowindow, replace this alert with a modal fragment
         showObservationDialog(marker);
     }
+
+ 	private boolean isNetworkAvailable() {
+	    ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+	    NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+	    return activeNetworkInfo != null && activeNetworkInfo.isConnected();
+	}	
+ 
 }

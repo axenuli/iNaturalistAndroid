@@ -1,5 +1,7 @@
 package org.inaturalist.android;
 
+import com.flurry.android.FlurryAgent;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -9,10 +11,14 @@ import android.app.Activity;
 import android.app.ListActivity;
 import android.content.ComponentName;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.database.Cursor;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -21,6 +27,7 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.SimpleAdapter;
@@ -28,7 +35,7 @@ import android.widget.Toast;
 
 public class MenuActivity extends ListActivity {
     public static String TAG = "MenuActivity";
-    List<Map<String,String>> MENU_ITEMS;
+    List<Map<String, String>> MENU_ITEMS;
     static final int CAPTURE_IMAGE_ACTIVITY_REQUEST_CODE = 1;
     static final int SELECT_IMAGE_REQUEST_CODE = 2;
     private Button mAddObservationButton;
@@ -36,12 +43,34 @@ public class MenuActivity extends ListActivity {
     private Uri mPhotoUri;
     private INaturalistApp app;
     private ActivityHelper mHelper;
+	private Button mSyncObservationsButton;
+	
+	
+
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+	}
+	
+	
+
+	@Override
+	protected void onStop()
+	{
+		super.onStop();		
+		FlurryAgent.onEndSession(this);
+	}	
     
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+		//Crashlytics.start(this);
         setContentView(R.layout.menu);
         
+       
         MENU_ITEMS = new ArrayList<Map<String, String>>();
         Map<String,String> map;
         
@@ -80,7 +109,7 @@ public class MenuActivity extends ListActivity {
         
        
         SimpleAdapter adapter = new SimpleAdapter(this, 
-                (List<? extends Map<String, ?>>) MENU_ITEMS, 
+                (List<? extends Map<String, String>>) MENU_ITEMS,
                 R.layout.menu_item,
                 new String[] {"title"},
                 new int[] {R.id.title});
@@ -97,15 +126,55 @@ public class MenuActivity extends ListActivity {
         if (app == null) { app = (INaturalistApp) getApplicationContext(); }
         if (mHelper == null) { mHelper = new ActivityHelper(this);}
         
+        
+        app.detectUserCountryAndUpdateNetwork(this);
+        
+        String detectedNetwork = app.getInaturalistNetworkMember();
+        if (detectedNetwork != null) {
+        	// Set the logo in the title bar according to network type
+        	String logoName = app.getStringResourceByName("inat_logo_" + detectedNetwork);
+        	String packageName = getPackageName();
+        	int resId = getResources().getIdentifier(logoName, "drawable", packageName);
+        	ImageView titleBarLogo = (ImageView) findViewById(R.id.logo);
+        	titleBarLogo.setImageResource(resId);
+        	setTitle(app.getStringResourceByName("network_" + detectedNetwork));
+        }
+
+ 
+        
         mAddObservationButton = (Button) findViewById(R.id.add_observation);
         mTakePictureButton = (Button) findViewById(R.id.take_picture);
         
         mAddObservationButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                startActivity(new Intent(Intent.ACTION_INSERT, Observation.CONTENT_URI));
+            	Intent intent = new Intent(Intent.ACTION_INSERT, Observation.CONTENT_URI, MenuActivity.this, ObservationEditor.class);
+            	startActivity(intent);
             }
         });
+        
+        
+        mSyncObservationsButton = (Button) findViewById(R.id.sync_observations);
+
+        mSyncObservationsButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (!isNetworkAvailable()) {
+                    Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    return;
+                } else if (!isLoggedIn()) {
+                	// User not logged-in - redirect to settings screen
+                	startActivity(new Intent(MenuActivity.this, INaturalistPrefsActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                    return;
+                }
+
+                Toast.makeText(getApplicationContext(), R.string.syncing_observations, Toast.LENGTH_LONG).show(); 
+
+                Intent serviceIntent = new Intent(INaturalistService.ACTION_SYNC, null, MenuActivity.this, INaturalistService.class);
+                startService(serviceIntent);
+ 
+            }
+        });        
         
         mTakePictureButton.setOnClickListener(new View.OnClickListener() {           
             @Override
@@ -114,6 +183,8 @@ public class MenuActivity extends ListActivity {
                 openImageIntent(MenuActivity.this, mPhotoUri, SELECT_IMAGE_REQUEST_CODE);
             }
         });
+        
+        refreshSyncButton(); 
         
         // See if we need to display the tutorial (only for the first time using the app)
         SharedPreferences preferences = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
@@ -161,6 +232,8 @@ public class MenuActivity extends ListActivity {
     public void onResume() {
         super.onResume();
         if (app == null) { app = (INaturalistApp) getApplicationContext(); }
+
+        refreshSyncButton();
     }
     
     @Override
@@ -206,7 +279,7 @@ public class MenuActivity extends ListActivity {
                 
             } else if (resultCode == RESULT_CANCELED) {
                 // User cancelled the image capture
-                getContentResolver().delete(mPhotoUri, null, null);
+            	if (mPhotoUri != null) getContentResolver().delete(mPhotoUri, null, null);
                 
             } else {
                 // Image capture failed, advise user
@@ -228,6 +301,11 @@ public class MenuActivity extends ListActivity {
         } else if (title.equals(getString(R.string.map))) {
             startActivity(new Intent(this, INaturalistMapActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         } else if (title.equals(getString(R.string.updates))) {
+        	if (!isNetworkAvailable()) {
+        		Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+        		return;
+        	}
+ 
             startActivity(new Intent(this, WebActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         } else if (title.equals(getString(R.string.settings))) {
             startActivity(new Intent(this, INaturalistPrefsActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
@@ -237,4 +315,36 @@ public class MenuActivity extends ListActivity {
             startActivity(new Intent(this, GuidesActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
         }
     }
+    
+    
+    private boolean isLoggedIn() {
+        SharedPreferences prefs = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
+        return prefs.getString("username", null) != null;
+    }    
+
+ 	private boolean isNetworkAvailable() {
+	    ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+	    NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+	    return activeNetworkInfo != null && activeNetworkInfo.isConnected();
+	}	
+ 	
+ 	
+    /** Shows the sync observations button, if needed */
+    private void refreshSyncButton() {
+        int syncCount = 0;
+
+        Cursor c = getContentResolver().query(Observation.CONTENT_URI, 
+        		Observation.PROJECTION, 
+        		"((_updated_at > _synced_at AND _synced_at IS NOT NULL) OR (_synced_at IS NULL))", 
+        		null, 
+        		Observation.SYNC_ORDER);
+        syncCount = c.getCount();
+        c.close();
+
+    	if (syncCount > 0) {
+    		mSyncObservationsButton.setVisibility(View.VISIBLE);
+    	} else {
+    		mSyncObservationsButton.setVisibility(View.GONE);
+    	}
+    } 	
 }

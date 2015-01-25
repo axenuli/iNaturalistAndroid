@@ -1,6 +1,8 @@
 package org.inaturalist.android;
 
 import java.util.ArrayList;
+import java.util.Locale;
+
 import org.inaturalist.android.INaturalistService.LoginType;
 
 import com.actionbarsherlock.app.ActionBar;
@@ -11,6 +13,7 @@ import com.facebook.SessionState;
 import com.facebook.Session.StatusCallback;
 import com.facebook.UiLifecycleHelper;
 import com.facebook.widget.LoginButton;
+import com.flurry.android.FlurryAgent;
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
@@ -19,20 +22,30 @@ import android.accounts.AccountManagerFuture;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
+import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.res.Resources;
+import android.database.Cursor;
 import android.graphics.Paint;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.Html;
+import android.text.method.LinkMovementMethod;
 import android.util.Base64;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
@@ -64,15 +77,32 @@ public class INaturalistPrefsActivity extends SherlockActivity {
     private LoginButton mFacebookLoginButton;
     private Button mGoogleLogin;
 	private View mFBSeparator;
-	private RadioGroup rbPreferredLocaleSelector;	
+	private RadioGroup rbPreferredNetworkSelector;	
+	private RadioGroup rbPreferredLocaleSelector;
 	private INaturalistApp mApp;
 	
     private UiLifecycleHelper mUiHelper;
     
     private String mGoogleUsername;
     
+    private int formerSelectedNetworkRadioButton;
     private int formerSelectedRadioButton;
     
+    
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+	}
+
+	@Override
+	protected void onStop()
+	{
+		super.onStop();		
+		FlurryAgent.onEndSession(this);
+	}	
 
     private Session.StatusCallback mCallback = new Session.StatusCallback() {
         @Override
@@ -81,6 +111,8 @@ public class INaturalistPrefsActivity extends SherlockActivity {
         }
     };
     private TextView mHelp;
+	private TextView mContactSupport;
+	private TextView mVersion;
     
     private void onSessionStateChange(Session session, SessionState state, Exception exception) {
 //        Log.d(TAG, "onSessionStateChange: " + session.toString() + ":" + state.toString());
@@ -176,10 +208,37 @@ public class INaturalistPrefsActivity extends SherlockActivity {
 	    mHelp = (TextView) findViewById(R.id.tutorial_link);
 	    mHelp.setPaintFlags(Paint.UNDERLINE_TEXT_FLAG);
 	    
-	    rbPreferredLocaleSelector = (RadioGroup)findViewById(R.id.radioLang);
 	    
-	    RadioButton rbDeviceLanguage = (RadioButton)findViewById(R.id.rbDeviceLang);
-	    rbDeviceLanguage.setText( rbDeviceLanguage.getText() + " (" + mApp.getFormattedDeviceLocale() + ")" );
+	    mContactSupport = (TextView) findViewById(R.id.contact_support);
+	    mContactSupport.setText(Html.fromHtml(mContactSupport.getText().toString()));
+	    mContactSupport.setMovementMethod(LinkMovementMethod.getInstance()); 
+	    
+	    mVersion = (TextView) findViewById(R.id.version);
+	    try {
+			mVersion.setText(String.format("Version %s", getPackageManager().getPackageInfo(getPackageName(), 0).versionName));
+		} catch (NameNotFoundException e) {
+			e.printStackTrace();
+			mVersion.setText("");
+		}
+	    
+	    // Add the iNat network settings
+	    rbPreferredNetworkSelector = (RadioGroup)findViewById(R.id.radioNetworks);
+	    
+	    String[] networks = mApp.getINatNetworks();
+	    for (int i = 0; i < networks.length; i++) {
+	    	RadioButton radioButton = new RadioButton(this);
+	    	radioButton.setText(mApp.getStringResourceByName("network_" + networks[i]));
+	    	radioButton.setId(i);
+	    	radioButton.setOnClickListener(new OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					onINatNetworkRadioButtonClicked(v);
+				}
+			});
+            rbPreferredNetworkSelector.addView(radioButton);
+	    }
+	    
+	   makeLanguageRadioButtons(); 
 	    
 	    mHelp.setOnClickListener(new OnClickListener() {
             @Override
@@ -197,6 +256,11 @@ public class INaturalistPrefsActivity extends SherlockActivity {
         mGoogleLogin.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
+                if (!isNetworkAvailable()) {
+                    Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    return;
+                }
+
                 signIn(LoginType.GOOGLE, null, null);
             }
         });
@@ -208,8 +272,11 @@ public class INaturalistPrefsActivity extends SherlockActivity {
         mFacebookLoginButton.setSessionStatusCallback(new StatusCallback() {
             @Override
             public void call(Session session, SessionState state, Exception exception) {
-//                Log.d(TAG, "onSessionStateChange: " + state.toString());
-                if ((state == SessionState.OPENED) || (state == SessionState.OPENED_TOKEN_UPDATED)) {
+                Log.d(TAG, "onSessionStateChange: " + state.toString());
+                if ((state == SessionState.CLOSED_LOGIN_FAILED) && (!isNetworkAvailable())) {
+                    Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    return;
+                } else if ((state == SessionState.OPENED) || (state == SessionState.OPENED_TOKEN_UPDATED)) {
                     String username = mPreferences.getString("username", null);
                     if (username == null) {
                         // First time login
@@ -236,7 +303,14 @@ public class INaturalistPrefsActivity extends SherlockActivity {
         mSignOutButton.setOnClickListener(new View.OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				signOut();
+                mHelper.confirm(getString(R.string.signed_out), 
+                        getString(R.string.alert_sign_out),
+                        new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                    	signOut();
+                    }
+                });
 			}
 		});
         
@@ -261,70 +335,68 @@ public class INaturalistPrefsActivity extends SherlockActivity {
 	    	mHelper.alert(getString(R.string.username_invalid));
 	    }
 	    
+	    updateINatNetworkRadioButtonState();
 	    updateRadioButtonState();
 	}
 	
-	private void updateRadioButtonState(){
-		String pref_locale = mPreferences.getString("pref_locale", "");
-		if(pref_locale.equalsIgnoreCase("eu")){
-			rbPreferredLocaleSelector.check(R.id.rbDeviceEu);
-			formerSelectedRadioButton = R.id.rbDeviceEu;
-		}else if(pref_locale.equalsIgnoreCase("gl")){
-			rbPreferredLocaleSelector.check(R.id.rbDeviceGl);
-			formerSelectedRadioButton = R.id.rbDeviceGl;
-		}else{
-			rbPreferredLocaleSelector.check(R.id.rbDeviceLang);
-			formerSelectedRadioButton = R.id.rbDeviceLang;
-		}
+	private void updateINatNetworkRadioButtonState(){
+	    String[] networks = mApp.getINatNetworks();
+		String network = mApp.getInaturalistNetworkMember();
+
+	    for (int i = 0; i < networks.length; i++) {
+	    	if (networks[i].equals(network)) {
+	    		rbPreferredNetworkSelector.check(i);
+	    		formerSelectedNetworkRadioButton = i;
+	    		break;
+	    	}
+	    }
 	}
 	
-	public void onRadioButtonClicked(View view){		
+	public void onINatNetworkRadioButtonClicked(View view){		
 	    final boolean checked = ((RadioButton) view).isChecked();
 	    final int selectedRadioButtonId = view.getId();	    	    
-	    //Toast.makeText(getApplicationContext(), getString(R.string.language_restart), Toast.LENGTH_LONG).show();
+	    final String[] networks = mApp.getINatNetworks();
 	    
 	    DialogInterface.OnClickListener dialogClickListener = new DialogInterface.OnClickListener() {
 	        @Override
 	        public void onClick(DialogInterface dialog, int which) {
 	            switch (which){
 	            case DialogInterface.BUTTON_POSITIVE:
-	            	switch(selectedRadioButtonId) {
-		    	        case R.id.rbDeviceEu:
-		    	            if (checked){	            	
-		    	            	mPrefEditor.putString("pref_locale", "eu");
-		    	            	mPrefEditor.commit();	            	
-		    	            }
-		    	            break;
-		    	        case R.id.rbDeviceGl:
-		    	            if (checked){
-		    	            	mPrefEditor.putString("pref_locale", "gl");
-		    	            	mPrefEditor.commit();	            	
-		    	            }
-		    	            break;
-		    	        default:
-		    	        	if(checked){
-		    	        		mPrefEditor.putString("pref_locale", "");
-		    	            	mPrefEditor.commit();	            	
-		    	        	}
-		    	        	break;
-		    	    }
-	            	formerSelectedRadioButton = selectedRadioButtonId;
+	            	if (checked) {	            	
+	            		mApp.setInaturalistNetworkMember(networks[selectedRadioButtonId]);
+	            		mPrefEditor.putString("pref_locale", mApp.getStringResourceByName("inat_network_language_" + networks[selectedRadioButtonId]));
+	            		mPrefEditor.commit();
+	            	}            	
+
+	            	formerSelectedNetworkRadioButton = selectedRadioButtonId;
 	            	mApp.applyLocaleSettings();
 	        	    mApp.restart();
 	                break;
 
 	            case DialogInterface.BUTTON_NEGATIVE:
 	                //No button clicked
-	            	rbPreferredLocaleSelector.check(formerSelectedRadioButton);	            	
+	            	rbPreferredNetworkSelector.check(formerSelectedNetworkRadioButton);	            	
 	                break;
 	            }
 	        }
 	    };
 
 	    AlertDialog.Builder builder = new AlertDialog.Builder(this);
-	    builder.setMessage(getString(R.string.language_restart))
-	    	.setPositiveButton(getString(R.string.restart_now), dialogClickListener)
-	        .setNegativeButton(getString(R.string.cancel), dialogClickListener).show();	    	    	   
+	    builder.setMessage(mApp.getStringResourceByName("alert_message_use_" + networks[selectedRadioButtonId]))
+	    	.setPositiveButton(getString(R.string.ok), dialogClickListener)
+	        .setNegativeButton(getString(R.string.cancel), dialogClickListener);
+	    
+		LayoutInflater inflater = getLayoutInflater();
+		View titleBarView = inflater.inflate(R.layout.change_network_title_bar, null);	
+		ImageView titleBarLogo = (ImageView) titleBarView.findViewById(R.id.title_bar_logo);
+	
+	    String logoName = mApp.getStringResourceByName("inat_logo_" + networks[selectedRadioButtonId]);
+	    String packageName = getPackageName();
+	    int resId = getResources().getIdentifier(logoName, "drawable", packageName);
+	    titleBarLogo.setImageResource(resId);
+
+	    builder.setCustomTitle(titleBarView);
+	    builder.show();
 	}
 	
 	@Override
@@ -427,8 +499,9 @@ public class INaturalistPrefsActivity extends SherlockActivity {
 			
 			// TODO - Support for OAuth2 login with Google/Facebook
 			if (mLoginType == LoginType.PASSWORD) {
-			    Boolean result = INaturalistService.verifyCredentials(mUsername, mPassword);
-			    if (result) {
+			    String result = INaturalistService.verifyCredentials(mUsername, mPassword);
+			    if (result != null) {
+			    	mUsername = result;
 			        return "true";
 			    } else {
 			        return null;
@@ -581,12 +654,111 @@ public class INaturalistPrefsActivity extends SherlockActivity {
 	}
 	
 	private void signOut() {
+        SharedPreferences prefs = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
+        String login = prefs.getString("username", null);
+
 		mPrefEditor.remove("username");
 		mPrefEditor.remove("credentials");
 		mPrefEditor.remove("password");
 		mPrefEditor.remove("login_type");
         mPrefEditor.remove("last_sync_time");
 		mPrefEditor.commit();
+		
+		int count1 = getContentResolver().delete(Observation.CONTENT_URI, "((_updated_at > _synced_at AND _synced_at IS NOT NULL) OR (_synced_at IS NULL))", null);
+		int count2 = getContentResolver().delete(ObservationPhoto.CONTENT_URI, "((_updated_at > _synced_at AND _synced_at IS NOT NULL) OR (_synced_at IS NULL))", null);
+        int count3 = getContentResolver().delete(ProjectObservation.CONTENT_URI, "(is_new = 1) OR (is_deleted = 1)", null);
+        int count4 = getContentResolver().delete(ProjectFieldValue.CONTENT_URI, "((_updated_at > _synced_at AND _synced_at IS NOT NULL) OR (_synced_at IS NULL))", null);
+
+		Log.d(TAG, String.format("Deleted %d / %d / %d / %d unsynced observations", count1, count2, count3, count4));
+
 		toggle();
 	}
+	
+	private boolean isNetworkAvailable() {
+		ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+		NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+		return activeNetworkInfo != null && activeNetworkInfo.isConnected();
+	}	
+
+
+	public void makeLanguageRadioButtons()
+	{
+		rbPreferredLocaleSelector = (RadioGroup)findViewById(R.id.radioLang);
+
+		String[] locales = LocaleHelper.SupportedLocales;
+		for (int i=0; i < locales.length; i++) {
+			RadioButton rb = new RadioButton(this);
+			final int selectedButton = i;
+			final Activity context = this;
+			rb.setText(new Locale(locales[i]).getDisplayLanguage());
+			rb.setOnClickListener (new OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					PromptUserToConfirmSelection(context, selectedButton);
+				}
+			});
+			rbPreferredLocaleSelector.addView(rb, i);
+		}
+	}
+
+	private void PromptUserToConfirmSelection(Activity context, int index) {
+		final int selectedButton = index;
+		final String locale = LocaleHelper.SupportedLocales[index];
+		final Activity thisActivity = context;
+		DialogInterface.OnClickListener dialogClickListener = new DialogInterface.OnClickListener() {
+			@Override
+			public void onClick(DialogInterface dialog, int which) {
+				switch (which) {
+				case DialogInterface.BUTTON_POSITIVE:
+					mPrefEditor.putString("pref_locale", locale);
+					mPrefEditor.commit();
+					formerSelectedRadioButton = selectedButton;
+					mApp.applyLocaleSettings();
+					mApp.restart();
+					break;
+
+				case DialogInterface.BUTTON_NEGATIVE:
+					//No button clicked
+					rbPreferredLocaleSelector.check(rbPreferredLocaleSelector.getChildAt(formerSelectedRadioButton).getId());
+					break;
+				}
+			}
+		};
+
+		AlertDialog.Builder builder = new AlertDialog.Builder(thisActivity);
+		builder.setMessage(getString(R.string.language_restart))
+		.setPositiveButton(getString(R.string.restart_now), dialogClickListener)
+		.setNegativeButton(getString(R.string.cancel), dialogClickListener).show();
+
+
+	}
+	private void updateRadioButtonState(){
+		String pref_locale = mPreferences.getString("pref_locale", "");
+		String[] supportedLocales = LocaleHelper.SupportedLocales;
+
+		// if no preference is set, find app default
+		if (pref_locale.equalsIgnoreCase("")) {
+			String defaultLocale = LocaleHelper.getDefaultLocale();
+			for (int i = 0; i < supportedLocales.length; i++) {
+				if (supportedLocales[i].equalsIgnoreCase(defaultLocale)) {
+					RadioButton rb = (RadioButton) rbPreferredLocaleSelector.getChildAt(i);
+					rb.setChecked(true);
+					formerSelectedRadioButton = i;
+					return;
+				}
+			}
+		}
+		else {
+			for (int i = 0; i < supportedLocales.length; i++) {
+				if (pref_locale.equalsIgnoreCase(supportedLocales[i])) {
+					RadioButton rb = (RadioButton) rbPreferredLocaleSelector.getChildAt(i);
+					rb.setChecked(true);
+					formerSelectedRadioButton = i;
+					return;
+				}
+			}
+		}
+
+	}	
+
 }

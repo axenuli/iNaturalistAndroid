@@ -186,16 +186,33 @@
 	<string name="language_settings">Language settings</string>
 	<string name="locale_gl">Galician</string>
 	<string name="locale_eu">Basque</string>
+	<string name="locale_en_rNZ">English (New Zealand)</string>
 	<string name="use_device_language_settings">Use device language settings</string>
 	<string name="language_restart">Language settings changed. Please restart the app for the changes to take place.</string>
 	<string name="restart_now">Restart now</string>
-    
+    <string name="choose_location">Choose Location</string>
+    <string name="done">Done</string>
+    <string name="please_sign_in_via_settings">Please sign-in via settings screen in order to view your projects</string>
+    <string name="contact_support"><![CDATA[<a href="mailto:help@inaturalist.org">Contact support</a>]]></string>
+    <string name="credits">Designed and built by iNaturalist.org with support from the California Academy of Sciences</string>
+    <string name="leave_project">Leave Project</string>
+    <string name="leave_project_confirmation">Are you sure you want to leave this project?</string>
+    <string name="discard_location_changes">Are you sure you want to discard unsaved changes?</string>
+    <string name="edit_location">Edit Location</string>
+    <string name="get_current_location">Get current location</string>
+    <string name="pull_to_refresh">Pull to refresh...</string>
+    <string name="release_to_refresh">Release to refresh...</string>
+    <string name="refreshing">Refreshing...</string>
+    <string name="sync_x_observations">Sync %1$d observations</string>
+    <string name="sync_observations">Sync Observations</string>
+
     <string-array name="tutorial_images">
 	    <item>tutorial1</item>
 	    <item>tutorial2</item>
 	    <item>tutorial3</item>
 	    <item>tutorial4</item>
 	    <item>tutorial5</item>
+	    <item>tutorial6</item>
     </string-array> 
     
     
@@ -210,4 +227,13 @@
 	    <item>private</item>
     </string-array> 
    
+    <string name="alert_sign_out">Are you sure you want to sign out? This will delete all your observations on this device. It will not affect any observations you\'ve uploaded to iNaturalist.</string>
+    <string name="alert_unsupported_media_type">Sorry, but at the moment we do not support uploading photos from Google Drive, Dropbox, etc.\nPlease download the photos to your local phone storage and try again.</string>
+
+
+    <string name="alert_title_use">Use</string>
+
+    <string name="inat_network_settings">iNaturalist Network Settings</string>
+
+	<string name="network_restart">Network settings changed. Please restart the app for the changes to take place.</string>
 </resources>

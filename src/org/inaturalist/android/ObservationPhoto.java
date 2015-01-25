@@ -162,7 +162,7 @@ public class ObservationPhoto implements BaseColumns, Serializable {
         } else {
         	try {
 				this.photo_url = o.getJSONObject("photo").getString(photoUrlSize);
-			} catch (JSONException e) {
+			} catch (Exception e) {
 				e.printStackTrace();
 			}
         }
@@ -199,7 +199,7 @@ public class ObservationPhoto implements BaseColumns, Serializable {
     }
 
     public void merge(ObservationPhoto observation_photo) {
-        if (this._updated_at.before(observation_photo.updated_at)) {
+        if (observation_photo.updated_at != null && this._updated_at.before(observation_photo.updated_at)) {
             // overwrite
             this.created_at = observation_photo.created_at;
             this.id = observation_photo.id;

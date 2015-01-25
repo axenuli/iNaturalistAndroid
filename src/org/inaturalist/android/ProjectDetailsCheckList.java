@@ -122,35 +122,60 @@ public class ProjectDetailsCheckList extends SherlockFragment {
             final View view = inflater.inflate(R.layout.taxon_item, parent, false); 
             BetterJSONObject item = null;
             BetterJSONObject defaultName = null;
-            try {
-                item = new BetterJSONObject(mItems.get(position).getJSONObject("taxon"));
-                defaultName = new BetterJSONObject(item.getJSONObject("default_name"));
-            } catch (JSONException e) {
-                e.printStackTrace();
-                return view;
-            }
-
-            TextView idName = (TextView) view.findViewById(R.id.id_name);
-            idName.setText(defaultName.getString("name"));
-            TextView taxonName = (TextView) view.findViewById(R.id.taxon_name);
-            taxonName.setText(item.getString("name"));
-            taxonName.setTypeface(null, Typeface.ITALIC);
-            ImageView taxonPic = (ImageView) view.findViewById(R.id.taxon_pic);
-            UrlImageViewHelper.setUrlDrawable(taxonPic, item.getString("photo_url"));
             
-            Button addObservation = (Button) view.findViewById(R.id.add_observation);
-            final BetterJSONObject defaultName2 = defaultName;
-            addObservation.setOnClickListener(new OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    BetterJSONObject item = (BetterJSONObject) view.getTag();
-                    Intent intent = new Intent(Intent.ACTION_INSERT, Observation.CONTENT_URI, getActivity(), ObservationEditor.class);
-                    intent.putExtra(ObservationEditor.SPECIES_GUESS, String.format("%s (%s)", defaultName2.getString("name"), item.getString("name")));
-                    startActivity(intent);
-                }
-            });
+            if (!mItems.get(position).has("taxon")) {
+            	// It's the generic/general add observation item
+            	
+                TextView idName = (TextView) view.findViewById(R.id.id_name);
+                idName.setText(R.string.add_observation);
 
-            view.setTag(item);
+                TextView taxonName = (TextView) view.findViewById(R.id.taxon_name);
+                taxonName.setVisibility(View.GONE);
+                
+                Button addObservation = (Button) view.findViewById(R.id.add_observation);
+                addObservation.setOnClickListener(new OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        Intent intent = new Intent(Intent.ACTION_INSERT, Observation.CONTENT_URI, getActivity(), ObservationEditor.class);
+                        intent.putExtra(ObservationEditor.OBSERVATION_PROJECT, mProject.getInt("id"));
+                        startActivity(intent);
+                    }
+                });
+
+            } else {
+            	// Regular taxon item            
+            
+            	try {
+            		item = new BetterJSONObject(mItems.get(position).getJSONObject("taxon"));
+            		defaultName = new BetterJSONObject(item.getJSONObject("default_name"));
+            	} catch (JSONException e) {
+            		e.printStackTrace();
+            		return view;
+            	}
+
+            	TextView idName = (TextView) view.findViewById(R.id.id_name);
+            	idName.setText(defaultName.getString("name"));
+            	TextView taxonName = (TextView) view.findViewById(R.id.taxon_name);
+            	taxonName.setText(item.getString("name"));
+            	taxonName.setTypeface(null, Typeface.ITALIC);
+            	ImageView taxonPic = (ImageView) view.findViewById(R.id.taxon_pic);
+            	UrlImageViewHelper.setUrlDrawable(taxonPic, item.getString("photo_url"));
+
+            	Button addObservation = (Button) view.findViewById(R.id.add_observation);
+            	final BetterJSONObject defaultName2 = defaultName;
+            	addObservation.setOnClickListener(new OnClickListener() {
+            		@Override
+            		public void onClick(View v) {
+            			BetterJSONObject item = (BetterJSONObject) view.getTag();
+            			Intent intent = new Intent(Intent.ACTION_INSERT, Observation.CONTENT_URI, getActivity(), ObservationEditor.class);
+            			intent.putExtra(ObservationEditor.SPECIES_GUESS, String.format("%s (%s)", defaultName2.getString("name"), item.getString("name")));
+                        intent.putExtra(ObservationEditor.OBSERVATION_PROJECT, mProject.getInt("id"));
+            			startActivity(intent);
+            		}
+            	});
+
+            	view.setTag(item);
+            }
 
             return view;
         }
@@ -167,6 +192,8 @@ public class ProjectDetailsCheckList extends SherlockFragment {
             JSONArray checkList = (checkListSerializable == null ? new SerializableJSONArray() : checkListSerializable).getJSONArray();
             mCheckList = new ArrayList<JSONObject>();
             
+            mCheckList.add(new JSONObject()); // The generic/general add taxon item
+            
             for (int i = 0; i < checkList.length(); i++) {
                 try {
                     mCheckList.add(checkList.getJSONObject(i));
@@ -177,16 +204,10 @@ public class ProjectDetailsCheckList extends SherlockFragment {
 
             mProgress.setVisibility(View.GONE);
             
-            if (checkList.length() > 0) {
-                mProjectTaxaEmpty.setVisibility(View.GONE);
-                mProjectTaxa.setVisibility(View.VISIBLE);
-                mAdapter = new CheckListAdapter(getActivity(), mCheckList);
-                mProjectTaxa.setAdapter(mAdapter);             
-            } else {
-                mProjectTaxaEmpty.setText(R.string.no_check_list);
-                mProjectTaxaEmpty.setVisibility(View.VISIBLE);
-                mProjectTaxa.setVisibility(View.GONE);
-            }
+            mProjectTaxaEmpty.setVisibility(View.GONE);
+            mProjectTaxa.setVisibility(View.VISIBLE);
+            mAdapter = new CheckListAdapter(getActivity(), mCheckList);
+            mProjectTaxa.setAdapter(mAdapter);             
         }
     }
   

@@ -13,6 +13,7 @@ import org.json.JSONObject;
 import com.actionbarsherlock.app.SherlockFragment;
 import com.koushikdutta.urlimageviewhelper.UrlImageViewHelper;
 
+import android.app.Application;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -54,7 +55,24 @@ public abstract class BaseTab extends SherlockFragment {
             
             getActivity().unregisterReceiver(mProjectsReceiver);
             
-            JSONArray projects = ((SerializableJSONArray) intent.getSerializableExtra(getFilterResultParamName())).getJSONArray();
+            Boolean isSharedOnApp = intent.getBooleanExtra(INaturalistService.IS_SHARED_ON_APP, false);
+            
+            SerializableJSONArray serializableArray;
+            if (!isSharedOnApp) {
+            	serializableArray = ((SerializableJSONArray) intent.getSerializableExtra(getFilterResultParamName()));
+            } else {
+            	// Get results from app context
+            	serializableArray = (SerializableJSONArray) mApp.getServiceResult(getFilterResultName());
+            	mApp.setServiceResult(getFilterResultName(), null); // Clear data afterwards
+            }
+            
+            if (serializableArray == null) {
+            	mProjects = new ArrayList<JSONObject>();
+            	loadProjectsIntoUI();
+            	return;
+            }
+
+            JSONArray projects = serializableArray.getJSONArray();
             mProjects = new ArrayList<JSONObject>();
             
             if (projects == null) {
@@ -103,7 +121,11 @@ public abstract class BaseTab extends SherlockFragment {
             if (!isNetworkAvailable()) {
             	// No projects due to no Internet connection
             	mEmptyListLabel.setText(getNoInternetText());
+            } else if (requiresLogin()) {
+            	// Required user login
+            	mEmptyListLabel.setText(getUserLoginRequiredText());
             } else {
+            	// No projects due to no Internet connection
             	mEmptyListLabel.setText(getNoItemsFoundText());
             }
 
@@ -123,7 +145,8 @@ public abstract class BaseTab extends SherlockFragment {
     private ProjectsReceiver mProjectsReceiver;
     private TextView mEmptyListLabel;
     private EditText mSearchText;
-    private ProgressBar mProgressBar; 	
+    private ProgressBar mProgressBar;
+	private INaturalistApp mApp; 	
     
     /*
      * Methods that should be overriden by subclasses
@@ -139,7 +162,7 @@ public abstract class BaseTab extends SherlockFragment {
     abstract protected String getFilterResultParamName();
 
     /** When an item (project/guide) is clicked */
-    abstract protected void onItemSelected(BetterJSONObject item);
+    abstract protected void onItemSelected(BetterJSONObject item, int index);
 
     /** Returns the search filter EditText hint */
     abstract protected String getSearchFilterTextHint();
@@ -149,6 +172,12 @@ public abstract class BaseTab extends SherlockFragment {
 
     /** Returns the text to display when no Internet connection is available */
     abstract protected String getNoInternetText();
+
+    /** Whether or not the tab requires user login (e.g. for "Joined projects") */
+    protected boolean requiresLogin() { return false; }
+
+    /** Returns the text to display when a user login is required */
+    protected String getUserLoginRequiredText() { return getResources().getString(R.string.please_sign_in); }
 
     @Override
     public void onPause() {
@@ -183,22 +212,32 @@ public abstract class BaseTab extends SherlockFragment {
         
         super.onResume();
     }
+    
+    /**
+     * Updates an existing project (in memory)
+     * @param index
+     * @param project
+     */
+    protected void updateProject(int index, BetterJSONObject project) {
+    	mAdapter.updateItem(index, project.getJSONObject());
+    }
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         Log.i(TAG, "onCreateView: " + getActionName() + ":" + getClass().getName() + (mProjects != null ? mProjects.toString() : "null"));
         
         mProjects = null;
+        mApp = (INaturalistApp) getActivity().getApplication();
         
         View v = inflater.inflate(R.layout.project_list, container, false);
         
         mProjectList = (ListView) v.findViewById(android.R.id.list);
         mProjectList.setOnItemClickListener(new OnItemClickListener() {
             @Override
-            public void onItemClick(AdapterView<?> arg0, View arg1, int arg2, long arg3) {
-                BetterJSONObject project = (BetterJSONObject) arg1.getTag();
+            public void onItemClick(AdapterView<?> arg0, View arg1, int index, long arg3) {
+                BetterJSONObject project = new BetterJSONObject(mAdapter.getItem(index));
                 
-                onItemSelected(project);
+                onItemSelected(project, index);
             }
         });
         
@@ -248,6 +287,10 @@ public abstract class BaseTab extends SherlockFragment {
         private List<JSONObject> mOriginalItems;
         private Context mContext;
         private Filter mFilter;
+        
+        public void updateItem(int index, JSONObject object) {
+        	mItems.set(index, object);
+        }
 
         public ProjectsAdapter(Context context, List<JSONObject> objects) {
             super(context, R.layout.project_item, objects);
@@ -336,6 +379,8 @@ public abstract class BaseTab extends SherlockFragment {
         
         private String getShortDescription(String description) {
             // Strip HTML tags
+        	if (description == null) return "";
+        	
             String noHTML = Html.fromHtml(description).toString();
             
             return noHTML;

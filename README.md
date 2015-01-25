@@ -8,7 +8,9 @@ iNaturalistAndroid is an Android app for [iNaturalist.org](http://www.inaturalis
 
 ```bash
 cd path/to/your/workspace
-git clone git@github.com:inaturalist/iNaturalistAndroid.git
+git clone REPO_PATH
+# e.g. git clone git@github.com:inaturalist/iNaturalistAndroid.git, though it will be different 
+# if you're working on your own fork
 
 # Get the JAR deps
 mkdir iNaturalistAndroid/libs/
@@ -78,6 +80,7 @@ cp iNaturalistAndroid/res/values/config.xml.example iNaturalistAndroid/res/value
 1. Scroll down to the `Library` box and click `Add`
 1. Select the `actionbarsherlock` , `PullToRefresh-library` and `android-switch-backport` projects and press OK
 1. Press OK to close the dialog
+1. Install Crashlytics for Android (follow instructions): http://download.crashlytics.com/android/eclipse/
 1. Clean and rebuild the entire workspace (all imported projects)
 
 In theory it should build now!

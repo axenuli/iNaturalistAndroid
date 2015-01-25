@@ -1,5 +1,6 @@
 package org.inaturalist.android;
 
+import com.flurry.android.FlurryAgent;
 import com.koushikdutta.urlimageviewhelper.UrlImageViewHelper;
 
 import java.io.File;
@@ -100,6 +101,7 @@ import android.widget.Gallery;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.Spinner;
@@ -148,13 +150,16 @@ public class ObservationEditor extends SherlockFragmentActivity {
     private static final int CAPTURE_IMAGE_ACTIVITY_REQUEST_CODE = 100;
     private static final int COMMENTS_IDS_REQUEST_CODE = 101;
     private static final int PROJECT_SELECTOR_REQUEST_CODE = 102;
+    private static final int LOCATION_CHOOSER_REQUEST_CODE = 103;
     private static final int MEDIA_TYPE_IMAGE = 1;
     private static final int DATE_DIALOG_ID = 0;
     private static final int TIME_DIALOG_ID = 1;
     private static final int ONE_MINUTE = 60 * 1000;
     
-    private static final int TAXON_SEARCH_REQUEST_CODE = 301;
+    private static final int PROJECT_FIELD_TAXON_SEARCH_REQUEST_CODE = 301;
+    private static final int TAXON_SEARCH_REQUEST_CODE = 302;
     public static final String SPECIES_GUESS = "species_guess";
+	public static final String OBSERVATION_PROJECT = "observation_project";
     
     private List<ProjectFieldViewer> mProjectFieldViewers;
     private Switch mIdPlease;
@@ -168,12 +173,33 @@ public class ObservationEditor extends SherlockFragmentActivity {
     
 	private boolean mProjectFieldsUpdated = false;
 	private boolean mDeleted = false;
+	private ImageView mTaxonSelector;
+
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+	}
+
+	@Override
+	protected void onStop()
+	{
+		super.onStop();		
+		FlurryAgent.onEndSession(this);
+	}	
 
     private class ProjectReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
-            JSONArray projectList = ((SerializableJSONArray) intent.getSerializableExtra(INaturalistService.PROJECTS_RESULT)).getJSONArray();
             mProjects = new ArrayList<BetterJSONObject>();
+        	SerializableJSONArray serializableArray = (SerializableJSONArray) intent.getSerializableExtra(INaturalistService.PROJECTS_RESULT);
+            JSONArray projectList = new JSONArray();
+        	
+        	if (serializableArray != null) {
+        		projectList = serializableArray.getJSONArray();
+        	}
 
             for (int i = 0; i < projectList.length(); i++) {
                 try {
@@ -610,7 +636,7 @@ public class ObservationEditor extends SherlockFragmentActivity {
                     public void onClick(View v) {
                         Intent intent = new Intent(ObservationEditor.this, TaxonSearchActivity.class);
                         intent.putExtra(TaxonSearchActivity.FIELD_ID, mField.field_id);
-                        startActivityForResult(intent, TAXON_SEARCH_REQUEST_CODE);
+                        startActivityForResult(intent, PROJECT_FIELD_TAXON_SEARCH_REQUEST_CODE);
                     }
                 });
 
@@ -804,11 +830,26 @@ public class ObservationEditor extends SherlockFragmentActivity {
             mObservation = (Observation) savedInstanceState.getSerializable("mObservation");
             mProjects = (ArrayList<BetterJSONObject>) savedInstanceState.getSerializable("mProjects");
             mProjectIds = savedInstanceState.getIntegerArrayList("mProjectIds");
-            mProjectFieldValues = (Hashtable<Integer, ProjectFieldValue>) savedInstanceState.getSerializable("mProjectFieldValues");
+            mProjectFieldValues = (HashMap<Integer, ProjectFieldValue>) savedInstanceState.getSerializable("mProjectFieldValues");
             mProjectFieldsUpdated = savedInstanceState.getBoolean("mProjectFieldsUpdated");
         }
 
+        mTaxonSelector = (ImageView) findViewById(R.id.taxonSelector);
         
+        mTaxonSelector.setOnClickListener(new OnClickListener() {
+			@Override
+			public void onClick(View arg0) {
+                if (!isNetworkAvailable()) {
+                    Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    return;
+                }
+
+				Intent intent = new Intent(ObservationEditor.this, TaxonSearchActivity.class);
+				intent.putExtra(TaxonSearchActivity.SPECIES_GUESS, mSpeciesGuessTextView.getText().toString());
+				startActivityForResult(intent, TAXON_SEARCH_REQUEST_CODE);
+			}
+		});        
+
         mIdPlease = (Switch) findViewById(R.id.id_please);
         mGeoprivacy = (Spinner) findViewById(R.id.geoprivacy);
         mSpeciesGuessTextView = (TextView) findViewById(R.id.speciesGuess);
@@ -942,7 +983,44 @@ public class ObservationEditor extends SherlockFragmentActivity {
         mLocationRefreshButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                getLocation();
+            	AlertDialog.Builder builder = new AlertDialog.Builder(ObservationEditor.this);
+            	// Set the adapter
+            	String[] items = {
+            			getResources().getString(R.string.get_current_location),
+            			getResources().getString(R.string.edit_location)
+                };
+            	builder.setAdapter(
+            			new ArrayAdapter<String>(ObservationEditor.this,
+            					android.R.layout.simple_list_item_1, items), null);
+
+            	final AlertDialog alertDialog = builder.create();
+            	
+            	ListView listView = alertDialog.getListView();
+            	listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            		@Override
+            		public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+            			alertDialog.dismiss();
+            			
+            			if (position == 0) {
+            				// Get current location
+            				getLocation();
+
+            				mLocationProgressView.setVisibility(View.VISIBLE);
+            				mLocationRefreshButton.setVisibility(View.GONE);
+            				mLocationStopRefreshButton.setVisibility(View.VISIBLE);
+            			} else {
+            				// Edit location
+            				Intent intent = new Intent(ObservationEditor.this, LocationChooserActivity.class);
+            				intent.putExtra(LocationChooserActivity.LONGITUDE, mObservation.longitude);
+            				intent.putExtra(LocationChooserActivity.LATITUDE, mObservation.latitude);
+            				intent.putExtra(LocationChooserActivity.ACCURACY, (mObservation.positional_accuracy != null ? mObservation.positional_accuracy.doubleValue() : 0));
+
+            				startActivityForResult(intent, LOCATION_CHOOSER_REQUEST_CODE);
+            			}
+            		}
+            	});	
+
+            	alertDialog.show();
             }
         });
 
@@ -975,19 +1053,26 @@ public class ObservationEditor extends SherlockFragmentActivity {
         
         
         if (mProjectIds == null) {
-            // Get IDs of project-observations
-            int obsId = (mObservation.id == null ? mObservation._id : mObservation.id);
-            Cursor c = getContentResolver().query(ProjectObservation.CONTENT_URI, ProjectObservation.PROJECTION,
-                    "(observation_id = " + obsId + ") AND ((is_deleted = 0) OR (is_deleted is NULL))",
-                    null, ProjectObservation.DEFAULT_SORT_ORDER);
-            c.moveToFirst();
-            mProjectIds = new ArrayList<Integer>();
-            while (c.isAfterLast() == false) {
-                ProjectObservation projectObservation = new ProjectObservation(c);
-                mProjectIds.add(projectObservation.project_id);
-                c.moveToNext();
-            }
-            c.close();
+        	if ((intent != null) && (intent.hasExtra(OBSERVATION_PROJECT))) {
+        		Integer projectId = intent.getIntExtra(OBSERVATION_PROJECT, 0);
+        		mProjectIds = new ArrayList<Integer>();
+        		mProjectIds.add(projectId);
+
+        	} else {
+        		// Get IDs of project-observations
+        		int obsId = (mObservation.id == null ? mObservation._id : mObservation.id);
+        		Cursor c = getContentResolver().query(ProjectObservation.CONTENT_URI, ProjectObservation.PROJECTION,
+        				"(observation_id = " + obsId + ") AND ((is_deleted = 0) OR (is_deleted is NULL))",
+        				null, ProjectObservation.DEFAULT_SORT_ORDER);
+        		c.moveToFirst();
+        		mProjectIds = new ArrayList<Integer>();
+        		while (c.isAfterLast() == false) {
+        			ProjectObservation projectObservation = new ProjectObservation(c);
+        			mProjectIds.add(projectObservation.project_id);
+        			c.moveToNext();
+        		}
+        		c.close();
+        	}
         }
 
         refreshProjectFields();
@@ -1418,7 +1503,7 @@ public class ObservationEditor extends SherlockFragmentActivity {
     };
     private ArrayList<Integer> mProjectIds;
     private Hashtable<Integer, ProjectField> mProjectFields;
-    private Hashtable<Integer, ProjectFieldValue> mProjectFieldValues = null;
+    private HashMap<Integer, ProjectFieldValue> mProjectFieldValues = null;
 
     @Override
     protected Dialog onCreateDialog(int id) {
@@ -1489,9 +1574,9 @@ public class ObservationEditor extends SherlockFragmentActivity {
         }
 
         mLocationRequestedAt = System.currentTimeMillis();
-        mLocationProgressView.setVisibility(View.VISIBLE);
-        mLocationRefreshButton.setVisibility(View.GONE);
-        mLocationStopRefreshButton.setVisibility(View.VISIBLE);
+        //mLocationProgressView.setVisibility(View.VISIBLE);
+        //mLocationRefreshButton.setVisibility(View.GONE);
+        //mLocationStopRefreshButton.setVisibility(View.VISIBLE);
     }
 
     private void handleNewLocation(Location location) {
@@ -1514,6 +1599,7 @@ public class ObservationEditor extends SherlockFragmentActivity {
         mLocationProgressView.setVisibility(View.GONE);
         mLocationRefreshButton.setVisibility(View.VISIBLE);
         mLocationStopRefreshButton.setVisibility(View.GONE);
+
         if (mLocationManager != null && mLocationListener != null) {
             mLocationManager.removeUpdates(mLocationListener);
         }
@@ -1653,8 +1739,32 @@ public class ObservationEditor extends SherlockFragmentActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        
-        if (requestCode == TAXON_SEARCH_REQUEST_CODE) {
+         if (requestCode == LOCATION_CHOOSER_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+            	stopGetLocation();
+            	
+                double longitude = data.getDoubleExtra(LocationChooserActivity.LONGITUDE, 0);
+                double latitude = data.getDoubleExtra(LocationChooserActivity.LATITUDE, 0);
+                double accuracy = data.getDoubleExtra(LocationChooserActivity.ACCURACY, 0);
+                mLatitudeView.setText(Double.toString(latitude));
+                mLongitudeView.setText(Double.toString(longitude));
+                mObservation.latitude = latitude;
+                mObservation.longitude = longitude;
+                mObservation.positional_accuracy = (int) Math.ceil(accuracy);
+                mAccuracyView.setText(mObservation.positional_accuracy.toString());
+            }
+         } else if (requestCode == TAXON_SEARCH_REQUEST_CODE) {
+            if (resultCode == RESULT_OK) {
+                String iconicTaxonName = data.getStringExtra(TaxonSearchActivity.ICONIC_TAXON_NAME);
+                String taxonName = data.getStringExtra(TaxonSearchActivity.TAXON_NAME);
+                String idName = data.getStringExtra(TaxonSearchActivity.ID_NAME);
+            	String speciesGuess = String.format("%s (%s)", idName, taxonName);
+            	mSpeciesGuess = speciesGuess;
+            	mObservation.species_guess = speciesGuess;
+                mObservation.taxon_id = data.getIntExtra(TaxonSearchActivity.TAXON_ID, 0);
+            	mSpeciesGuessTextView.setText(mSpeciesGuess);
+            }
+        } else if (requestCode == PROJECT_FIELD_TAXON_SEARCH_REQUEST_CODE) {
             if (resultCode == RESULT_OK) {
                 // Notify the project fields that we returned from a taxon search
                 for (ProjectFieldViewer viewer : mProjectFieldViewers) {
@@ -1699,7 +1809,14 @@ public class ObservationEditor extends SherlockFragmentActivity {
                 }
                 
                 updateImageOrientation(selectedImageUri);
-                createObservationPhotoForPhoto(selectedImageUri);
+                Uri createdUri = createObservationPhotoForPhoto(selectedImageUri);
+                
+                if (createdUri == null) {
+                	mHelper.alert(getResources().getString(R.string.alert_unsupported_media_type));
+                	mFileUri = null;
+                	return;
+                }
+
                 updateImages();
                 if (!isCamera) {
                     promptImportPhotoMetadata(selectedImageUri);
@@ -1775,7 +1892,15 @@ public class ObservationEditor extends SherlockFragmentActivity {
 
     private Uri createObservationPhotoForPhoto(Uri photoUri) {
         ObservationPhoto op = new ObservationPhoto();
-        Long photoId = ContentUris.parseId(photoUri);
+        Long photoId;
+        try {
+        	photoId = ContentUris.parseId(photoUri);
+        } catch (Exception exc) {
+        	// Not a supported media type (e.g. Google Drive)
+        	exc.printStackTrace();
+        	return null;
+        }
+
         ContentValues cv = op.getContentValues();
         cv.put(ObservationPhoto._OBSERVATION_ID, mObservation._id);
         cv.put(ObservationPhoto.OBSERVATION_ID, mObservation.id);
@@ -1797,6 +1922,9 @@ public class ObservationEditor extends SherlockFragmentActivity {
     
     private void importPhotoMetadata(Uri photoUri) {
         String imgFilePath = imageFilePathFromUri(photoUri);
+        
+        if (imgFilePath == null) return;
+        
         try {
             ExifInterface exif = new ExifInterface(imgFilePath);
             float[] latLng = new float[2];
@@ -1901,7 +2029,7 @@ public class ObservationEditor extends SherlockFragmentActivity {
      */
     @SuppressLint("NewApi")
 	private Uri getPath(final Context context, final Uri uri) {
-
+    	
     	final boolean isKitKat = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
 
     	// DocumentProvider
@@ -1950,21 +2078,25 @@ public class ObservationEditor extends SherlockFragmentActivity {
     			return ContentUris.withAppendedId(contentUri, Long.valueOf(split[1]));
     		}
     	}
+
     	// MediaStore (and general)
-    	else if ("content".equalsIgnoreCase(uri.getScheme())) {
+    	if ("content".equalsIgnoreCase(uri.getScheme())) {
     		return uri;
     	}
     	// File
     	else if ("file".equalsIgnoreCase(uri.getScheme())) {
     		return uri;
     	}
-
+    	
     	return null;
     }
     
 
     private void updateImageOrientation(Uri uri) {
         String imgFilePath = imageFilePathFromUri(uri);
+        
+        if (imgFilePath == null) return;
+        
         ContentValues values = new ContentValues();
         try {
             ExifInterface exif = new ExifInterface(imgFilePath);
@@ -1979,19 +2111,34 @@ public class ObservationEditor extends SherlockFragmentActivity {
             Log.d(TAG, "lat: " + lat + ", d: " + d);
         } catch (IOException e) {
             Log.e(TAG, "couldn't find " + imgFilePath);
+        } catch (UnsupportedOperationException e) {
+        	Log.e(TAG, "Couldn't update image orientation for path: " + uri);
         }
     }
     
     private String imageFilePathFromUri(Uri uri) {
         String[] projection = {
                 MediaStore.MediaColumns._ID,
-                MediaStore.Images.ImageColumns.ORIENTATION,
                 MediaStore.Images.Media.DATA
         };
-        Cursor c = getContentResolver().query(uri, projection, null, null, null);
+        
+
+        Cursor c;
+        try {
+        	c = getContentResolver().query(uri, projection, null, null, null);
+        } catch (Exception exc) {
+        	exc.printStackTrace();
+        	return null;
+        }
+        
+        if (c == null) {
+        	return null;
+        }
+
         c.moveToFirst();
         String path = c.getString(c.getColumnIndexOrThrow(MediaStore.Images.Media.DATA));
         c.close();
+        
         return path;
     }
 
@@ -2181,7 +2328,7 @@ public class ObservationEditor extends SherlockFragmentActivity {
         
         if (mProjectFieldValues == null) {
             // Get project field values
-            mProjectFieldValues = new Hashtable<Integer, ProjectFieldValue>();
+            mProjectFieldValues = new HashMap<Integer, ProjectFieldValue>();
             
             Cursor c = getContentResolver().query(ProjectFieldValue.CONTENT_URI, ProjectFieldValue.PROJECTION,
                     "(observation_id = " + obsId + ")",

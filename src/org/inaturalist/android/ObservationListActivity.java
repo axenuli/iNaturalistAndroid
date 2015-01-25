@@ -12,6 +12,7 @@ import com.actionbarsherlock.app.SherlockListActivity;
 import com.actionbarsherlock.view.Menu;
 import com.actionbarsherlock.view.MenuInflater;
 import com.actionbarsherlock.view.MenuItem;
+import com.flurry.android.FlurryAgent;
 import com.handmark.pulltorefresh.library.PullToRefreshBase;
 import com.handmark.pulltorefresh.library.PullToRefreshBase.OnRefreshListener;
 import com.handmark.pulltorefresh.library.PullToRefreshListView;
@@ -20,6 +21,7 @@ import com.koushikdutta.urlimageviewhelper.UrlImageViewHelper;
 import android.annotation.TargetApi;
 import android.content.BroadcastReceiver;
 import android.content.ContentUris;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -45,12 +47,13 @@ import android.view.View.OnClickListener;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
 import android.widget.ImageView;
 import android.widget.ListView;
+import android.widget.RelativeLayout;
 import android.widget.SimpleCursorAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
 public class ObservationListActivity extends SherlockListActivity {
-	public static String TAG = "INAT";
+	public static String TAG = "INAT:ObservationListActivity";
 	
 	private PullToRefreshListView mPullRefreshListView;
 	
@@ -59,6 +62,26 @@ public class ObservationListActivity extends SherlockListActivity {
 	private int mLastIndex;
 	private int mLastTop;
 	private ActionBar mTopActionBar;
+
+	private TextView mSyncObservations;
+
+	private static final int COMMENTS_IDS_REQUEST_CODE = 100;
+	
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+	}
+
+	@Override
+	protected void onStop()
+	{
+		super.onStop();		
+		FlurryAgent.onEndSession(this);
+	}	
+	
 	
 	private boolean isNetworkAvailable() {
 	    ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -72,6 +95,9 @@ public class ObservationListActivity extends SherlockListActivity {
         	Log.i(TAG, "Got ACTION_SYNC_COMPLETE");
             mPullRefreshListView.onRefreshComplete();
             mPullRefreshListView.refreshDrawableState();
+            
+            ObservationCursorAdapter adapter = (ObservationCursorAdapter) getListAdapter();
+            adapter.refreshCursor();
         }
     } 	
   
@@ -97,11 +123,58 @@ public class ObservationListActivity extends SherlockListActivity {
         }
     }
 
+    /** Shows the sync required bottom bar, if needed */
+    private void refreshSyncBar() {
+        int syncCount = 0;
+
+        Cursor c = getContentResolver().query(Observation.CONTENT_URI, 
+        		Observation.PROJECTION, 
+        		"((_updated_at > _synced_at AND _synced_at IS NOT NULL) OR (_synced_at IS NULL))", 
+        		null, 
+        		Observation.SYNC_ORDER);
+        syncCount = c.getCount();
+        c.close();
+
+    	if (syncCount > 0) {
+    		mSyncObservations.setText(String.format(getResources().getString(R.string.sync_x_observations), syncCount));
+    		mSyncObservations.setVisibility(View.VISIBLE);
+    	} else {
+    		mSyncObservations.setVisibility(View.GONE);
+    	}
+    }
+    
+    
     /** Called when the activity is first created. */
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.observation_list);
+        
+        
+        mSyncObservations = (TextView) findViewById(R.id.sync_observations);
+        mSyncObservations.setOnClickListener(new OnClickListener() {
+			@Override
+			public void onClick(View v) {
+                if (!isNetworkAvailable()) {
+                    Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    return;
+                } else if (!isLoggedIn()) {
+                	// User not logged-in - redirect to settings screen
+                	startActivity(new Intent(ObservationListActivity.this, INaturalistPrefsActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                    return;
+                }
+
+                Toast.makeText(getApplicationContext(), R.string.syncing_observations, Toast.LENGTH_LONG).show(); 
+
+                Intent serviceIntent = new Intent(INaturalistService.ACTION_SYNC, null, ObservationListActivity.this, INaturalistService.class);
+                startService(serviceIntent);
+                
+                mSyncObservations.setVisibility(View.GONE);
+			}
+		});        
+        
+              
+        refreshSyncBar(); 
         
         mTopActionBar = getSupportActionBar();
         mTopActionBar.setHomeButtonEnabled(true);
@@ -128,16 +201,16 @@ public class ObservationListActivity extends SherlockListActivity {
         registerReceiver(mSyncCompleteReceiver, filter);
  
         mPullRefreshListView = (PullToRefreshListView) findViewById(R.id.observations_list);
-        mPullRefreshListView.getLoadingLayoutProxy().setPullLabel(getResources().getString(R.string.pull_to_sync));
-        mPullRefreshListView.getLoadingLayoutProxy().setReleaseLabel(getResources().getString(R.string.release_to_sync));
-        mPullRefreshListView.getLoadingLayoutProxy().setRefreshingLabel(getResources().getString(R.string.syncing));
+        mPullRefreshListView.getLoadingLayoutProxy().setPullLabel(getResources().getString(R.string.pull_to_refresh));
+        mPullRefreshListView.getLoadingLayoutProxy().setReleaseLabel(getResources().getString(R.string.release_to_refresh));
+        mPullRefreshListView.getLoadingLayoutProxy().setRefreshingLabel(getResources().getString(R.string.refreshing));
         mPullRefreshListView.setReleaseRatio(2.5f);
         
         // Set a listener to be invoked when the list should be refreshed.
         mPullRefreshListView.setOnRefreshListener(new OnRefreshListener<ListView>() {
             @Override
             public void onRefresh(PullToRefreshBase<ListView> refreshView) {
-                if (!isNetworkAvailable()) {
+                if (!isNetworkAvailable() || !isLoggedIn()) {
                     Thread t = (new Thread(new Runnable() {
                         @Override
                         public void run() {
@@ -155,12 +228,16 @@ public class ObservationListActivity extends SherlockListActivity {
                         }
                     }));
                     t.start();
-                    Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    if (!isNetworkAvailable()) {
+                        Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                    } else if (!isLoggedIn()) {
+                        Toast.makeText(getApplicationContext(), R.string.please_sign_in, Toast.LENGTH_LONG).show(); 
+                    }
                     return;
                 }
                 
                 // Start sync
-                Intent serviceIntent = new Intent(INaturalistService.ACTION_SYNC, null, ObservationListActivity.this, INaturalistService.class);
+                Intent serviceIntent = new Intent(INaturalistService.ACTION_PULL_OBSERVATIONS, null, ObservationListActivity.this, INaturalistService.class);
                 startService(serviceIntent);
             }
         });
@@ -212,7 +289,14 @@ public class ObservationListActivity extends SherlockListActivity {
         super.onResume();
         ListView lv = mPullRefreshListView.getRefreshableView();
         lv.setSelectionFromTop(mLastIndex, mLastTop);
+      
+        refreshSyncBar();
     }
+    
+    private boolean isLoggedIn() {
+        SharedPreferences prefs = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
+        return prefs.getString("username", null) != null;
+    } 
     
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -267,11 +351,32 @@ public class ObservationListActivity extends SherlockListActivity {
     }
     
     private class ObservationCursorAdapter extends SimpleCursorAdapter {
-        private HashMap<Long, String[]> mPhotoInfo = new HashMap<Long, String[]>();
+		private HashMap<Long, String[]> mPhotoInfo = new HashMap<Long, String[]>();
         
         public ObservationCursorAdapter(Context context, int layout, Cursor c, String[] from, int[] to) {
             super(context, layout, c, from, to);
             getPhotoInfo();
+        }
+        
+        @TargetApi(Build.VERSION_CODES.HONEYCOMB)
+		public void refreshCursor() {
+        	SharedPreferences prefs = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
+        	String login = prefs.getString("username", null);
+        	String conditions = "(_synced_at IS NULL";
+        	if (login != null) {
+        		conditions += " OR user_login = '" + login + "'";
+        	}
+        	conditions += ") AND (is_deleted = 0 OR is_deleted is NULL)"; // Don't show deleted observations
+        	
+        	Cursor newCursor = managedQuery(getIntent().getData(), Observation.PROJECTION, 
+        			conditions, null, Observation.DEFAULT_SORT_ORDER);
+
+        	if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.GINGERBREAD){
+        		Cursor oldCursor = swapCursor(newCursor);
+        		if (!oldCursor.isClosed()) oldCursor.close();
+        	} else {
+        		changeCursor(newCursor);
+        	}
         }
         
         /**
@@ -306,7 +411,7 @@ public class ObservationListActivity extends SherlockListActivity {
                 Long photoId = onlinePc.getLong(onlinePc.getColumnIndexOrThrow(ObservationPhoto._PHOTO_ID));
                 String photoUrl = onlinePc.getString(onlinePc.getColumnIndexOrThrow(ObservationPhoto.PHOTO_URL));
                 
-                if (!mPhotoInfo.containsKey(obsId)) {
+                //if (!mPhotoInfo.containsKey(obsId)) {
                     mPhotoInfo.put(
                             obsId,
                             new String[] {
@@ -316,7 +421,7 @@ public class ObservationListActivity extends SherlockListActivity {
                                     null,
                                     null
                             });
-                }
+                //}
                 onlinePc.moveToNext();
             }
             
@@ -366,7 +471,8 @@ public class ObservationListActivity extends SherlockListActivity {
                 Long syncedAt = opc.getLong(opc.getColumnIndexOrThrow(ObservationPhoto._SYNCED_AT));
                 Long updatedAt = opc.getLong(opc.getColumnIndexOrThrow(ObservationPhoto._UPDATED_AT));
                 String photoUrl = opc.getString(opc.getColumnIndexOrThrow(ObservationPhoto.PHOTO_URL));
-                if (!mPhotoInfo.containsKey(obsId)) {
+
+                //if (!mPhotoInfo.containsKey(obsId)) {
                     mPhotoInfo.put(
                             obsId,
                             new String[] {
@@ -376,7 +482,7 @@ public class ObservationListActivity extends SherlockListActivity {
                                 updatedAt.toString(),
                                 syncedAt.toString()
                             });
-                }
+                //}
                 opc.moveToNext();
             }
             
@@ -396,7 +502,7 @@ public class ObservationListActivity extends SherlockListActivity {
             ImageView image = (ImageView) view.findViewById(R.id.image);
             c.moveToPosition(position);
             Long obsId = c.getLong(c.getColumnIndexOrThrow(Observation._ID));
-            Long externalObsId = c.getLong(c.getColumnIndexOrThrow(Observation.ID));
+            final Long externalObsId = c.getLong(c.getColumnIndexOrThrow(Observation.ID));
             
             String[] photoInfo = mPhotoInfo.get(obsId);
             
@@ -488,15 +594,19 @@ public class ObservationListActivity extends SherlockListActivity {
             Long idCount = c.getLong(c.getColumnIndexOrThrow(Observation.IDENTIFICATIONS_COUNT));
             Long lastCommentsCount = c.getLong(c.getColumnIndexOrThrow(Observation.LAST_COMMENTS_COUNT));
             Long lastIdCount = c.getLong(c.getColumnIndexOrThrow(Observation.LAST_IDENTIFICATIONS_COUNT));
-            Long taxonId = c.getLong(c.getColumnIndexOrThrow(Observation.TAXON_ID));
+            final Long taxonId = c.getLong(c.getColumnIndexOrThrow(Observation.TAXON_ID));
             if (taxonId != 0 && idCount > 0) {
                 idCount--;
             }
             Long totalCount = commentsCount + idCount;
+            RelativeLayout clickCatcher = (RelativeLayout) view.findViewById(R.id.commentsIdClickCatcher);
+
             if (totalCount == 0) {
                 // No comments/IDs - don't display the indicator
                 commentIdCountText.setVisibility(View.INVISIBLE);
+                clickCatcher.setClickable(false);
             } else {
+                clickCatcher.setClickable(true);
                 commentIdCountText.setVisibility(View.VISIBLE);
                 if ((lastCommentsCount == null) || (lastCommentsCount < commentsCount) ||
                         (lastIdCount == null) || (lastIdCount < idCount)) {
@@ -507,6 +617,28 @@ public class ObservationListActivity extends SherlockListActivity {
                 }
                 
                 refreshCommentsIdSize(commentIdCountText, totalCount);
+
+                clickCatcher.setOnClickListener(new OnClickListener() {
+                	@Override
+                	public void onClick(View v) {
+                		if (!isNetworkAvailable()) {
+                			Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
+                			return;
+                		}
+
+                		// Show the comments/IDs for the observation
+                		Intent intent = new Intent(ObservationListActivity.this, CommentsIdsActivity.class);
+                		intent.putExtra(INaturalistService.OBSERVATION_ID, externalObsId.intValue());
+                		intent.putExtra(INaturalistService.TAXON_ID, taxonId.intValue());
+                		startActivityForResult(intent, COMMENTS_IDS_REQUEST_CODE);
+
+                		// Get the observation's IDs/comments
+                		Intent serviceIntent = new Intent(INaturalistService.ACTION_GET_OBSERVATION, null, ObservationListActivity.this, INaturalistService.class);
+                		serviceIntent.putExtra(INaturalistService.OBSERVATION_ID, externalObsId.intValue());
+                		startService(serviceIntent);
+
+                	}
+                });   
             }
  
             Long syncedAt = c.getLong(c.getColumnIndexOrThrow(Observation._SYNCED_AT));
@@ -571,4 +703,46 @@ public class ObservationListActivity extends SherlockListActivity {
  
         
     }
+    
+     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == COMMENTS_IDS_REQUEST_CODE) {
+            int observationId = data.getIntExtra(INaturalistService.OBSERVATION_ID, 0);
+            
+         	Cursor c = getContentResolver().query(Observation.CONTENT_URI, 
+        			Observation.PROJECTION, 
+        			"id = " + observationId, 
+        			null, 
+        			Observation.SYNC_ORDER);
+        	int count = c.getCount();
+        	if (count == 0) return;
+        	
+        	Observation observation = new Observation(c);
+
+        	c.close();
+            
+        	
+            // We know that the user now viewed all of the comments needed to be viewed (no new comments/ids)
+            observation.comments_count += data.getIntExtra(CommentsIdsActivity.NEW_COMMENTS, 0);
+            observation.identifications_count += data.getIntExtra(CommentsIdsActivity.NEW_IDS, 0);
+            observation.last_comments_count = observation.comments_count;
+            observation.last_identifications_count = observation.identifications_count;
+            observation.taxon_id = data.getIntExtra(CommentsIdsActivity.TAXON_ID, 0);
+            
+            String speciesGuess = data.getStringExtra(CommentsIdsActivity.SPECIES_GUESS);
+            if (speciesGuess != null) {
+            	observation.species_guess = speciesGuess;
+            }
+            String iconicTaxonName = data.getStringExtra(CommentsIdsActivity.ICONIC_TAXON_NAME);
+            if (iconicTaxonName != null) observation.iconic_taxon_name = iconicTaxonName;
+
+            // Only update the last_comments/id_count fields
+            ContentValues cv = observation.getContentValues();
+            cv.put(Observation._SYNCED_AT, System.currentTimeMillis()); // No need to sync
+            int updated = getContentResolver().update(observation.getUri(), cv, null, null);
+        }
+ 
+     }
 }

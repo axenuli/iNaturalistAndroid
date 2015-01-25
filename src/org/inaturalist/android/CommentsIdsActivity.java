@@ -15,6 +15,7 @@ import org.json.JSONObject;
 import com.actionbarsherlock.app.ActionBar;
 import com.actionbarsherlock.app.SherlockListActivity;
 import com.actionbarsherlock.view.MenuItem;
+import com.flurry.android.FlurryAgent;
 import com.koushikdutta.urlimageviewhelper.UrlImageViewHelper;
 
 import android.app.AlertDialog;
@@ -81,6 +82,17 @@ public class CommentsIdsActivity extends SherlockListActivity {
     private ArrayList<BetterJSONObject> mCommentsIds;
     private ProgressBar mProgress;
     private TextView mNoComments;
+    
+	@Override
+	protected void onStart()
+	{
+		super.onStart();
+		FlurryAgent.onStartSession(this, INaturalistApp.getAppContext().getString(R.string.flurry_api_key));
+		FlurryAgent.logEvent(this.getClass().getSimpleName());
+
+	}
+
+
     
     @Override
     protected void onPause() {
@@ -367,6 +379,7 @@ public class CommentsIdsActivity extends SherlockListActivity {
     	setResult();
 
         super.onStop();
+		FlurryAgent.onEndSession(this);
     }
     
     private void setResult() {
@@ -375,6 +388,7 @@ public class CommentsIdsActivity extends SherlockListActivity {
     	bundle.putInt(NEW_COMMENTS, mNewComments);
     	bundle.putInt(NEW_IDS, mNewIds);
     	bundle.putInt(TAXON_ID, mTaxonId);
+    	bundle.putInt(INaturalistService.OBSERVATION_ID, mObservationId);
     	if (mIconicTaxonName != null) bundle.putString(ICONIC_TAXON_NAME, mIconicTaxonName);
     	if (mSpeciesGuess != null) bundle.putString(SPECIES_GUESS, mSpeciesGuess);
     	
