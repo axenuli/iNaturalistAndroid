@@ -8,6 +8,7 @@ import java.util.HashMap;
 import org.apache.commons.lang3.StringUtils;
 
 import com.actionbarsherlock.app.ActionBar;
+import com.actionbarsherlock.app.SherlockFragmentActivity;
 import com.actionbarsherlock.app.SherlockListActivity;
 import com.actionbarsherlock.view.Menu;
 import com.actionbarsherlock.view.MenuInflater;
@@ -18,7 +19,10 @@ import com.handmark.pulltorefresh.library.PullToRefreshBase.OnRefreshListener;
 import com.handmark.pulltorefresh.library.PullToRefreshListView;
 import com.koushikdutta.urlimageviewhelper.UrlImageViewHelper;
 
+import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
+import android.app.LoaderManager.LoaderCallbacks;
+import android.support.v4.app.LoaderManager;
 import android.content.BroadcastReceiver;
 import android.content.ContentUris;
 import android.content.ContentValues;
@@ -39,12 +43,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.support.v4.app.NavUtils;
+import android.support.v4.content.Loader;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.View.OnClickListener;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ImageView;
 import android.widget.ListView;
 import android.widget.RelativeLayout;
@@ -52,7 +59,7 @@ import android.widget.SimpleCursorAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
-public class ObservationListActivity extends SherlockListActivity {
+public class ObservationListActivity extends BaseFragmentActivity implements OnItemClickListener {
 	public static String TAG = "INAT:ObservationListActivity";
 	
 	private PullToRefreshListView mPullRefreshListView;
@@ -65,7 +72,13 @@ public class ObservationListActivity extends SherlockListActivity {
 
 	private TextView mSyncObservations;
 
+	private ObservationCursorAdapter mAdapter;
+
+	private TextView mTitleBar;
+
 	private static final int COMMENTS_IDS_REQUEST_CODE = 100;
+
+	private static final int OBSERVATION_LIST_LOADER = 0x01;
 	
 	@Override
 	protected void onStart()
@@ -96,7 +109,7 @@ public class ObservationListActivity extends SherlockListActivity {
             mPullRefreshListView.onRefreshComplete();
             mPullRefreshListView.refreshDrawableState();
             
-            ObservationCursorAdapter adapter = (ObservationCursorAdapter) getListAdapter();
+            ObservationCursorAdapter adapter = mAdapter;
             adapter.refreshCursor();
         }
     } 	
@@ -150,7 +163,6 @@ public class ObservationListActivity extends SherlockListActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.observation_list);
         
-        
         mSyncObservations = (TextView) findViewById(R.id.sync_observations);
         mSyncObservations.setOnClickListener(new OnClickListener() {
 			@Override
@@ -177,11 +189,10 @@ public class ObservationListActivity extends SherlockListActivity {
         refreshSyncBar(); 
         
         mTopActionBar = getSupportActionBar();
-        mTopActionBar.setHomeButtonEnabled(true);
-        mTopActionBar.setDisplayHomeAsUpEnabled(true);
         mTopActionBar.setDisplayShowCustomEnabled(true);
         mTopActionBar.setCustomView(R.layout.observation_list_top_action_bar);
         mTopActionBar.setBackgroundDrawable(new ColorDrawable(Color.parseColor("#111111")));
+        mTitleBar = (TextView) mTopActionBar.getCustomView().findViewById(R.id.action_bar_title);
         TextView addButton = (TextView) mTopActionBar.getCustomView().findViewById(R.id.add);
         addButton.setOnClickListener(new OnClickListener() {
             @Override
@@ -190,6 +201,8 @@ public class ObservationListActivity extends SherlockListActivity {
             }
         });
         
+        INaturalistApp app = (INaturalistApp)(getApplication());
+       
         Intent intent = getIntent();
         if (intent.getData() == null) {
             intent.setData(Observation.CONTENT_URI);
@@ -241,6 +254,9 @@ public class ObservationListActivity extends SherlockListActivity {
                 startService(serviceIntent);
             }
         });
+
+        onDrawerCreate(savedInstanceState);
+        
         
 		ListView actualListView = mPullRefreshListView.getRefreshableView();
 
@@ -250,7 +266,7 @@ public class ObservationListActivity extends SherlockListActivity {
         
         // Inform the list we provide context menus for items
         //getListView().setOnCreateContextMenuListener(this);
-        
+		
         SharedPreferences prefs = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
         String login = prefs.getString("username", null);
         
@@ -262,7 +278,7 @@ public class ObservationListActivity extends SherlockListActivity {
         }
         conditions += ") AND (is_deleted = 0 OR is_deleted is NULL)"; // Don't show deleted observations
         
-        Cursor cursor = managedQuery(getIntent().getData(), Observation.PROJECTION, 
+        Cursor cursor = getContentResolver().query(getIntent().getData(), Observation.PROJECTION, 
         		conditions, null, Observation.DEFAULT_SORT_ORDER);
 
         // Used to map notes entries from the database to views
@@ -270,27 +286,55 @@ public class ObservationListActivity extends SherlockListActivity {
                 this, R.layout.list_item, cursor,
                 new String[] { Observation.SPECIES_GUESS, Observation.DESCRIPTION }, 
                 new int[] { R.id.speciesGuess, R.id.subContent });
-        setListAdapter(adapter);
+        
+        mAdapter = adapter;
+        
+        mPullRefreshListView.setEmptyView(findViewById(android.R.id.empty));
+        mPullRefreshListView.setAdapter(mAdapter);
+        mPullRefreshListView.setOnItemClickListener(this);
     }
     
-    @Override
+    public void setTitle(String title) {
+    	mTitleBar.setText(title);
+    }
+
+    
+    @SuppressLint("NewApi")
+	@Override
     public void onPause() {
+        super.onPause();
+
         // save last position of list so we can resume there later
         // http://stackoverflow.com/questions/3014089/maintain-save-restore-scroll-position-when-returning-to-a-listview
         ListView lv = mPullRefreshListView.getRefreshableView();
         mLastIndex = lv.getFirstVisiblePosition();
         View v = lv.getChildAt(0);
         mLastTop = (v == null) ? 0 : v.getTop();
+        
+        
+        ObservationCursorAdapter adapter = mAdapter;
+        adapter.notifyDataSetInvalidated();
+        if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.GINGERBREAD){
+        	Cursor oldCursor = adapter.swapCursor(null);
+        	if ((oldCursor != null) && (!oldCursor.isClosed())) oldCursor.close();
+        } else {
+        	adapter.changeCursor(null);
+        }
+
         super.onPause();
     }
     
     @Override
     public void onResume() {
         super.onResume();
+
         ListView lv = mPullRefreshListView.getRefreshableView();
         lv.setSelectionFromTop(mLastIndex, mLastTop);
       
         refreshSyncBar();
+        
+        ObservationCursorAdapter adapter = mAdapter;
+        adapter.refreshCursor();
     }
     
     private boolean isLoggedIn() {
@@ -298,45 +342,9 @@ public class ObservationListActivity extends SherlockListActivity {
         return prefs.getString("username", null) != null;
     } 
     
+   
     @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        MenuInflater inflater = getSupportMenuInflater();
-        inflater.inflate(R.menu.observations_menu, menu);
-        return super.onCreateOptionsMenu(menu);
-    }
-    
-    
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-        // Respond to the action bar's Up/Home button
-        case android.R.id.home:
-            NavUtils.navigateUpFromSameTask(this);
-            return true;
-
-        case R.id.observations_menu_add:
-            // Launch activity to insert a new item
-        	startActivity(new Intent(Intent.ACTION_INSERT, getIntent().getData(), this, ObservationEditor.class));
-            return true;
-        case R.id.observations_menu_sync:
-            if (!isNetworkAvailable()) {
-                Toast.makeText(getApplicationContext(), R.string.not_connected, Toast.LENGTH_LONG).show(); 
-                return true;
-            }
-
-            Intent serviceIntent = new Intent(INaturalistService.ACTION_SYNC, null, this, INaturalistService.class);
-            startService(serviceIntent);
-            return true;
-        case R.id.observations_menu_menu:
-            startActivity(new Intent(this, MenuActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
-            return true;
-        default:
-            return super.onOptionsItemSelected(item);
-        }
-    }
-    
-    @Override
-    protected void onListItemClick(ListView l, View v, int position, long id) {
+    public void onItemClick(AdapterView<?> l, View v, int position, long id) {
         Uri uri = ContentUris.withAppendedId(getIntent().getData(), id);
         
         String action = getIntent().getAction();
@@ -368,12 +376,12 @@ public class ObservationListActivity extends SherlockListActivity {
         	}
         	conditions += ") AND (is_deleted = 0 OR is_deleted is NULL)"; // Don't show deleted observations
         	
-        	Cursor newCursor = managedQuery(getIntent().getData(), Observation.PROJECTION, 
+        	Cursor newCursor = getContentResolver().query(getIntent().getData(), Observation.PROJECTION, 
         			conditions, null, Observation.DEFAULT_SORT_ORDER);
 
         	if (android.os.Build.VERSION.SDK_INT > android.os.Build.VERSION_CODES.GINGERBREAD){
         		Cursor oldCursor = swapCursor(newCursor);
-        		if (!oldCursor.isClosed()) oldCursor.close();
+        		if ((oldCursor != null) && (!oldCursor.isClosed())) oldCursor.close();
         	} else {
         		changeCursor(newCursor);
         	}
@@ -745,4 +753,5 @@ public class ObservationListActivity extends SherlockListActivity {
         }
  
      }
+
 }

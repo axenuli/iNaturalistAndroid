@@ -709,7 +709,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             observation = new Observation(c);
             handleObservationResponse(
                     observation,
-                    post("https://" + inatHost + "/observations.json?extra=observation_photos", paramsForObservation(observation, true))
+                    post("http://" + inatHost + "/observations.json?extra=observation_photos", paramsForObservation(observation, true))
             );
             c.moveToNext();
         }
@@ -786,7 +786,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
             params.add(new BasicNameValuePair("site_id", mApp.getStringResourceByName("inat_site_id_" + inatNetwork)));
             
             // TODO LATER resize the image for upload, maybe a 1024px jpg
-            JSONArray response = post("https://" + inatHost + "/observation_photos.json", params);
+            JSONArray response = post("http://" + inatHost + "/observation_photos.json", params);
             try {
                 if (response == null || response.length() != 1) {
                     break;
@@ -827,7 +827,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     	String inatNetwork = mApp.getInaturalistNetworkMember();
     	String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
 
-        String url = "https://" + inatHost + "/guides.json?";
+        String url = "http://" + inatHost + "/guides.json?";
         
         url += "per_page=200&page=";
         
@@ -864,7 +864,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         String inatNetwork = mApp.getInaturalistNetworkMember();
         String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
        
-        String url = "https://" + inatHost + "/guides.json?by=you&per_page=200";
+        String url = "http://" + inatHost + "/guides.json?by=you&per_page=200";
         JSONArray json = get(url, true);
         
         return new SerializableJSONArray(json);
@@ -904,7 +904,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         String inatNetwork = mApp.getInaturalistNetworkMember();
         String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
 
-        String url = "https://" + inatHost + String.format("/guides.json?latitude=%s&longitude=%s&per_page=200", lat, lon);
+        String url = "http://" + inatHost + String.format("/guides.json?latitude=%s&longitude=%s&per_page=200", lat, lon);
         Log.e(TAG, url);
 
         JSONArray json = get(url);
@@ -926,7 +926,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
         String inatNetwork = mApp.getInaturalistNetworkMember();
         String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
 
-        String url = "https://" + inatHost + String.format("/projects.json?latitude=%s&longitude=%s", lat, lon);
+        String url = "http://" + inatHost + String.format("/projects.json?latitude=%s&longitude=%s", lat, lon);
         
         Log.e(TAG, url);
 
@@ -981,7 +981,7 @@ public class INaturalistService extends IntentService implements ConnectionCallb
     private SerializableJSONArray getFeaturedProjects() throws AuthenticationException {
         String inatNetwork = mApp.getInaturalistNetworkMember();
         String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
-        String url = "https://" + inatHost + "/projects.json?featured=true";
+        String url = "http://" + inatHost + "/projects.json?featured=true";
         
         JSONArray json = get(url);
         

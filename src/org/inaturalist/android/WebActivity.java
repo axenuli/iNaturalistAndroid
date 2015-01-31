@@ -6,6 +6,7 @@ import org.inaturalist.android.INaturalistService.LoginType;
 
 import com.actionbarsherlock.app.ActionBar;
 import com.actionbarsherlock.app.SherlockActivity;
+import com.actionbarsherlock.app.SherlockFragmentActivity;
 import com.actionbarsherlock.view.Menu;
 import com.actionbarsherlock.view.MenuInflater;
 import com.actionbarsherlock.view.MenuItem;
@@ -22,7 +23,7 @@ import android.view.KeyEvent;
 import android.view.Window;
 import android.webkit.*;
 
-public class WebActivity extends SherlockActivity {
+public class WebActivity extends BaseFragmentActivity {
     private static String TAG = "WebActivity";
     private static String HOME_URL = INaturalistService.HOST + "/home.mobile";
     private WebView mWebView;
@@ -54,9 +55,11 @@ public class WebActivity extends SherlockActivity {
         ActionBar actionBar = getSupportActionBar();
         actionBar.setHomeButtonEnabled(true);
         actionBar.setDisplayHomeAsUpEnabled(true);
+        actionBar.setIcon(android.R.color.transparent);
 
         app = (INaturalistApp) getApplicationContext();
         setContentView(R.layout.web);
+        onDrawerCreate(savedInstanceState);
         helper = new ActivityHelper(this);
         mWebView = (WebView) findViewById(R.id.webview);
 
@@ -131,12 +134,6 @@ public class WebActivity extends SherlockActivity {
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
-        case android.R.id.home:
-            finish();
-            return true;
-        case R.id.menu:
-            startActivity(new Intent(this, MenuActivity.class).setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
-            return true;
         case R.id.reload:
             mWebView.reload();
             return true;

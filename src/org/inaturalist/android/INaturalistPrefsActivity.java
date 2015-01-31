@@ -5,9 +5,6 @@ import java.util.Locale;
 
 import org.inaturalist.android.INaturalistService.LoginType;
 
-import com.actionbarsherlock.app.ActionBar;
-import com.actionbarsherlock.app.SherlockActivity;
-import com.actionbarsherlock.view.MenuItem;
 import com.facebook.Session;
 import com.facebook.SessionState;
 import com.facebook.Session.StatusCallback;
@@ -53,7 +50,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 
-public class INaturalistPrefsActivity extends SherlockActivity {
+public class INaturalistPrefsActivity extends BaseFragmentActivity {
 	private static final String TAG = "INaturalistPrefsActivity";
 	public static final String REAUTHENTICATE_ACTION = "reauthenticate_action";
 	
@@ -146,18 +143,6 @@ public class INaturalistPrefsActivity extends SherlockActivity {
     }
 	
     
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        switch (item.getItemId()) {
-         case android.R.id.home:
-            finish();
-            return true;
-        default:
-            return super.onOptionsItemSelected(item);
-        }
-    }
-    
-    
 	@Override
     protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
@@ -166,10 +151,6 @@ public class INaturalistPrefsActivity extends SherlockActivity {
             mApp = (INaturalistApp) getApplicationContext();
         }
 		
-		ActionBar actionBar = getSupportActionBar();
-		actionBar.setHomeButtonEnabled(true);
-		actionBar.setDisplayHomeAsUpEnabled(true);
-
 		
 //		try {
 //		    Log.d("KeyHash:", "ENTER");
@@ -191,6 +172,8 @@ public class INaturalistPrefsActivity extends SherlockActivity {
         mUiHelper.onCreate(savedInstanceState);
         
 	    setContentView(R.layout.preferences);
+	    
+	    onDrawerCreate(savedInstanceState);
 	    
 	    mPreferences = getSharedPreferences("iNaturalistPreferences", MODE_PRIVATE);
 	    mPrefEditor = mPreferences.edit();
@@ -317,13 +300,17 @@ public class INaturalistPrefsActivity extends SherlockActivity {
         mSignUpButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+            	final String inatNetwork = mApp.getInaturalistNetworkMember();
+
                 mHelper.confirm(getString(R.string.ready_to_signup), 
-                        getString(R.string.about_to_signup),
+                		mApp.getStringResourceByName("inat_sign_up_" + inatNetwork),
                         new DialogInterface.OnClickListener() {
                     @Override
                     public void onClick(DialogInterface dialog, int which) {
+                    	String inatHost = mApp.getStringResourceByName("inat_host_" + inatNetwork);
+
                         Intent i = new Intent(Intent.ACTION_VIEW);
-                        i.setData(Uri.parse(INaturalistService.HOST + "/users/new"));
+                        i.setData(Uri.parse("http://" + inatHost + "/users/new"));
                         startActivity(i);
                     }
                 });
